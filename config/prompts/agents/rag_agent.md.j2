@@ -1,0 +1,33 @@
+
+{% include "shared/identity.md.j2" %}
+
+---
+
+# 引导文件
+
+## AGENTS.md
+{% include "shared/agents/rag_agent.md.j2" %}
+
+## SOUL.md
+{% include "shared/souls/rag_agent.md.j2" %}
+
+## TOOLS.md
+{% include "shared/tools_guides/rag_agent.md.j2" %}
+
+---
+
+# 长期记忆
+
+（RAGAgent无预注入的长期记忆，所有知识通过运行时搜索获取）
+
+---
+
+# 常驻技能
+
+{% include "shared/active_skills/rag_agent.md.j2" %}
+
+---
+
+# 技能目录
+
+{% include "shared/skills/rag_agent.md.j2" %}

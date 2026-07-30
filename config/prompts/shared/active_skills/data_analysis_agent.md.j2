@@ -1,0 +1,17 @@
+
+### 数据分析标准流程
+1. 查看DataContext中的可用数据（data_key、列名、类型）
+2. 如果数据需要预处理，先调用data_clean
+3. 如果不确定数据特征，先调用data_summarize生成概况
+4. 根据任务类型选择对应分析工具并调用
+5. 结果自动存入DataContext
+
+### 场景-工具映射
+| 场景 | 首选工具 | 备选 |
+|------|----------|------|
+| 文件导入 | data_ingest | - |
+| 缺失值/重复值处理 | data_clean | - |
+| 数据概况分析 | data_summarize | - |
+| 未来趋势预测 | time_series_forecast | - |
+| 异常数据识别 | anomaly_detect | - |
+| 目标变量预测 | general_predict | - |

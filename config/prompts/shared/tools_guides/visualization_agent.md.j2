@@ -1,0 +1,26 @@
+
+### chart_generate 使用策略
+- data_key: DataContext中的数据key
+- chart_type选择指南：
+  - bar: 对比不同类别的数值大小
+  - line: 展示时间趋势或连续变化
+  - pie: 展示占比分布
+  - scatter: 展示两个变量的相关关系
+  - heatmap: 相关性矩阵或密度分布
+  - area: 趋势和累积量
+  - radar: 多维度对比
+  - funnel: 转化流程
+- x_col/y_col: 必须是DataFrame中实际存在的列名
+- agg_func: 数据有重复x值时使用(sum/mean/count/max/min)
+- orient: vertical(默认)竖直柱状图, horizontal水平柱状图
+
+### dashboard_generate 使用策略
+- chart_keys: 已生成图表的key列表（来自chart_generate的返回值）
+- layout: grid(网格,默认)/tab(标签页)/page(分页)
+- columns: 网格布局的列数，默认2
+
+### 常见陷阱
+- 饼图数据列必须是数值类型，否则会报错
+- x_col和y_col拼写必须与DataFrame列名完全一致
+- 聚合图表(bar+agg_func)时确保x_col是分组列、y_col是数值列
+- 生成图表后再调dashboard_generate，不要反过来

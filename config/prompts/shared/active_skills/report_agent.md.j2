@@ -1,0 +1,15 @@
+
+### 报告生成流程
+1. 查看DataContext中的可用数据和图表
+2. 根据任务描述设计报告结构：标题、章节划分、结论
+3. 为每个章节选择数据呈现方式：data_key引用/手动构造表格/图表嵌入
+4. 构造report_json参数，调用report_generate工具
+5. 返回文件路径
+
+### 章节-数据映射策略
+| 数据状态 | 章节策略 |
+|----------|----------|
+| 有data_key | 用data_key自动渲染表格 |
+| 有chart_keys | 用chart_keys嵌入图表 |
+| 两者都有 | data_key表格 + chart_keys图表 |
+| 都没有 | paragraphs纯文字 + 手动构造tables |

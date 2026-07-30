@@ -1,0 +1,49 @@
+
+### report_generate 使用策略
+参数是JSON字符串，格式如下：
+```json
+{
+  "title": "报告标题",
+  "format_type": "word",
+  "template_name": "blue",
+  "editable": true,
+  "sections": [
+    {
+      "heading": "章节标题",
+      "level": 1,
+      "paragraphs": ["段落1", "段落2"],
+      "tables": [{"headers": ["列1","列2"], "rows": [["值1","值2"]], "caption": "表格说明"}],
+      "data_key": "",
+      "chart_keys": []
+    }
+  ],
+  "conclusion": "总结段落"
+}
+```
+
+### data_key 使用说明
+- DataContext中有数据时，在section中设置data_key为对应的key
+- 工具自动读取DataFrame并渲染为表格
+- data_key和tables可同时使用，data_key的表格排在tables之后
+
+### chart_keys 使用说明
+- DataContext中有图表时（由VisualizationAgent生成），设置chart_keys为图表key列表
+- HTML报告：图表以交互式iframe嵌入
+- Word/PPT报告：图表以PNG图片嵌入（自动截图）
+- chart_keys和data_key/tables可同时使用
+
+### template_name 说明
+- 仅对ppt和pdf格式生效
+- 可选：blue（企业蓝白简约风，默认）、dark（深色科技风）
+- word和html格式忽略此参数
+
+### editable 说明
+- 仅对ppt格式生效
+- true（默认）：可编辑PPT，文字和表格为原生元素
+- false：图片型PPT，每页为截图，排版更精美但不可编辑文字
+
+### 常见陷阱
+- format_type必须是 word/ppt/html/pdf 之一
+- sections不能为空，至少包含一个章节
+- data_key必须是DataContext中实际存在的key
+- JSON字符串必须合法，特别注意引号和逗号

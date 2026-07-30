@@ -1,0 +1,1117 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BI AutoGen</title>
+<!-- Markdown渲染 -->
+<script src="https://cdn.jsdelivr.net/npm/marked@14/marked.min.js"></script>
+<!-- XSS防护：净化HTML输出 -->
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<!-- 代码高亮 -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/styles/github-dark.min.css">
+<script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11/build/highlight.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+:root {
+  --bg: #0f1117; --surface: #1a1d27; --surface2: #242736;
+  --border: #2e3244; --text: #e4e6ef; --text2: #8b8fa3;
+  --accent: #6c8cff; --accent2: #4a6aef;
+  --green: #34d399; --red: #f87171; --yellow: #fbbf24;
+  --think: #a78bfa;
+}
+body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; flex-direction: column; }
+
+/* Header */
+.header { padding: 14px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; background: var(--surface); }
+.header h1 { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
+.header .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
+.header .dot.off { background: var(--text2); }
+
+/* Main layout */
+.main { flex: 1; display: flex; overflow: hidden; }
+
+/* Process panel (left) */
+.process { width: 340px; border-right: 1px solid var(--border); overflow-y: auto; padding: 16px; flex-shrink: 0; background: var(--surface); }
+.process h2 { font-size: 11px; color: var(--text2); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 12px; font-weight: 500; }
+
+/* DAG graph */
+.dag-container { position: relative; margin-bottom: 16px; }
+.dag-layers { display: flex; flex-direction: column; gap: 20px; align-items: center; }
+.dag-layer { display: flex; gap: 12px; justify-content: center; position: relative; }
+.dag-node {
+  background: var(--surface2); border: 1.5px solid var(--border); border-radius: 10px;
+  padding: 8px 14px; min-width: 100px; max-width: 160px; text-align: center;
+  position: relative; cursor: default; transition: all .2s;
+}
+.dag-node .agent-name { font-size: 11px; font-weight: 600; color: var(--accent); margin-bottom: 2px; text-transform: uppercase; letter-spacing: 0.5px; }
+.dag-node .task-desc { font-size: 12px; color: var(--text2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 1.4; }
+.dag-node.active { border-color: var(--accent); box-shadow: 0 0 12px rgba(108,140,255,0.2); }
+.dag-node.active .agent-name { color: #fff; }
+.dag-node.done { border-color: var(--green); }
+.dag-node.done .agent-name { color: var(--green); }
+.dag-node.error { border-color: var(--red); }
+.dag-node.error .agent-name { color: var(--red); }
+.dag-node .status-icon { position: absolute; top: -6px; right: -6px; width: 16px; height: 16px; border-radius: 50%; font-size: 9px; display: flex; align-items: center; justify-content: center; color: #fff; }
+.dag-node.done .status-icon { background: var(--green); }
+.dag-node.active .status-icon { background: var(--accent); animation: pulse 1s infinite; }
+.dag-node.error .status-icon { background: var(--red); }
+
+/* DAG edges via SVG overlay */
+.dag-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.dag-layers { position: relative; z-index: 1; }
+.dag-edge-line { fill: none; stroke: var(--border); stroke-width: 1.5; }
+.dag-edge-line.active { stroke: var(--accent); stroke-width: 2; }
+.dag-edge-line.done { stroke: var(--green); }
+
+/* Linear step fallback (single agent) */
+.step { padding: 7px 10px; border-radius: 6px; margin-bottom: 2px; font-size: 13px; display: flex; align-items: center; gap: 8px; color: var(--text2); transition: all .15s; }
+.step.active { background: var(--surface2); color: var(--text); }
+.step.active .icon { color: var(--accent); }
+.step.done .icon { color: var(--green); }
+.step .icon { font-size: 12px; flex-shrink: 0; width: 16px; text-align: center; }
+.step .label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.step .dur { font-size: 11px; color: var(--text2); font-variant-numeric: tabular-nums; }
+.tool-call { padding: 3px 10px 3px 34px; font-size: 12px; color: var(--text2); display: flex; gap: 6px; }
+.tool-call .tname { color: var(--accent); font-weight: 500; }
+.tool-call .targs { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: 0.6; }
+.tool-result { padding: 2px 10px 2px 34px; font-size: 12px; color: var(--text2); opacity: 0.7; }
+.tool-result.err { color: var(--red); opacity: 1; }
+
+/* Chat area (right) */
+.chat { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
+.messages { flex: 1; overflow-y: auto; padding: 24px 32px; }
+.msg { max-width: 800px; margin: 0 auto 20px; }
+.msg-user {
+  background: var(--surface2); border-radius: 12px 12px 4px 12px;
+  padding: 10px 16px; font-size: 14px; line-height: 1.6;
+  display: inline-block; max-width: 85%;
+}
+.msg-assistant { margin-bottom: 24px; }
+
+/* Think block */
+.think-block {
+  background: rgba(167,139,250,0.06); border-left: 3px solid var(--think);
+  border-radius: 0 8px 8px 0; padding: 10px 14px; margin-bottom: 14px;
+  font-size: 13px; color: var(--think); line-height: 1.7;
+  max-height: 500px; overflow-y: auto; transition: max-height .3s ease;
+}
+.think-block.collapsed { max-height: 36px; overflow: hidden; cursor: pointer; }
+.think-block.collapsed .think-content { opacity: 0.4; }
+.think-label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; opacity: 0.7; user-select: none; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+.think-label:hover { opacity: 1; }
+
+/* Answer block — Markdown rendered */
+.answer-block { font-size: 15px; line-height: 1.8; word-break: break-word; }
+.answer-block:empty::after { content: '...'; color: var(--text2); animation: pulse 1s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* Typing cursor */
+.typing-cursor {
+  display: inline-block;
+  color: var(--accent);
+  font-weight: 400;
+  animation: blink-cursor 0.8s step-end infinite;
+  margin-left: 1px;
+}
+@keyframes blink-cursor { 0%,100% { opacity: 1; } 50% { opacity: 0; } }
+
+/* Markdown styles inside answer-block */
+.answer-block p { margin: 0 0 10px; }
+.answer-block p:last-child { margin-bottom: 0; }
+.answer-block h1, .answer-block h2, .answer-block h3, .answer-block h4 { margin: 16px 0 8px; font-weight: 600; color: #fff; }
+.answer-block h1 { font-size: 22px; }
+.answer-block h2 { font-size: 18px; }
+.answer-block h3 { font-size: 16px; }
+.answer-block ul, .answer-block ol { margin: 8px 0; padding-left: 24px; }
+.answer-block li { margin: 4px 0; }
+.answer-block blockquote { border-left: 3px solid var(--accent); margin: 10px 0; padding: 6px 14px; color: var(--text2); background: rgba(108,140,255,0.05); border-radius: 0 6px 6px 0; }
+.answer-block strong { color: #fff; }
+.answer-block a { color: var(--accent); text-decoration: none; }
+.answer-block a:hover { text-decoration: underline; }
+.answer-block hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+.answer-block table { border-collapse: collapse; margin: 10px 0; font-size: 14px; width: 100%; }
+.answer-block th, .answer-block td { border: 1px solid var(--border); padding: 6px 12px; text-align: left; }
+.answer-block th { background: var(--surface2); font-weight: 600; color: #fff; }
+.answer-block tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+
+/* Code blocks */
+.answer-block code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+  font-size: 13px;
+}
+.answer-block :not(pre) > code {
+  background: var(--surface2); padding: 2px 6px; border-radius: 4px;
+  color: var(--accent); font-size: 0.9em;
+}
+.answer-block pre {
+  background: #161822; border: 1px solid var(--border); border-radius: 8px;
+  margin: 12px 0; overflow-x: auto; position: relative;
+}
+.answer-block pre code {
+  display: block; padding: 14px 16px; font-size: 13px; line-height: 1.6;
+}
+/* Copy button on code blocks */
+.answer-block pre .copy-btn {
+  position: absolute; top: 6px; right: 6px; background: var(--surface2);
+  border: 1px solid var(--border); border-radius: 4px; padding: 2px 8px;
+  font-size: 11px; color: var(--text2); cursor: pointer; opacity: 0;
+  transition: opacity .2s;
+}
+.answer-block pre:hover .copy-btn { opacity: 1; }
+.answer-block pre .copy-btn:hover { color: var(--text); background: var(--border); }
+
+/* Error */
+.error-block { background: rgba(248,113,113,0.08); border: 1px solid rgba(248,113,113,0.25); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; color: var(--red); font-size: 13px; }
+
+/* Table block */
+.table-block { background: var(--surface2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 14px; overflow: hidden; }
+.table-caption { padding: 8px 14px; font-size: 12px; color: var(--text2); border-bottom: 1px solid var(--border); }
+.table-block table { border-collapse: collapse; width: 100%; font-size: 13px; }
+.table-block th { background: rgba(108,140,255,0.08); padding: 6px 12px; text-align: left; font-weight: 600; color: var(--accent); white-space: nowrap; border-bottom: 1px solid var(--border); }
+.table-block td { padding: 5px 12px; border-bottom: 1px solid var(--border); color: var(--text); max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.table-block tr:last-child td { border-bottom: none; }
+.table-block tr:hover td { background: rgba(255,255,255,0.03); }
+.table-pagination {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 8px 14px; border-top: 1px solid var(--border); font-size: 12px; color: var(--text2);
+}
+.table-pagination button {
+  background: var(--surface); border: 1px solid var(--border); border-radius: 4px;
+  padding: 2px 10px; font-size: 12px; color: var(--text2); cursor: pointer; transition: all .15s;
+}
+.table-pagination button:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
+.table-pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+.table-pagination .page-info { min-width: 60px; text-align: center; }
+
+/* Input bar */
+.input-bar { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--surface); }
+.input-bar input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: 14px; color: var(--text); outline: none; transition: border-color .2s; }
+.input-bar input:focus { border-color: var(--accent); }
+.input-bar input:disabled { opacity: 0.5; }
+.input-bar button { background: var(--accent); color: #fff; border: none; border-radius: 10px; padding: 10px 24px; font-size: 14px; cursor: pointer; font-weight: 500; transition: all .15s; }
+.input-bar button:hover { background: var(--accent2); }
+.input-bar button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text2); }
+
+/* Config */
+.config { display: flex; gap: 8px; align-items: center; }
+.config input[type=text] { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; color: var(--text); width: 220px; outline: none; }
+.config label { font-size: 12px; color: var(--text2); }
+
+/* Toggle switch */
+.toggle-label { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.toggle-label input { display: none; }
+.toggle-switch {
+  width: 32px; height: 18px; border-radius: 9px; background: var(--border);
+  position: relative; transition: background .2s; flex-shrink: 0;
+}
+.toggle-switch::after {
+  content: ''; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+  border-radius: 50%; background: var(--text2); transition: all .2s;
+}
+.toggle-label input:checked + .toggle-switch { background: var(--think); }
+.toggle-label input:checked + .toggle-switch::after { left: 16px; background: #fff; }
+
+/* Question card (ask_user) */
+.question-card {
+  background: var(--surface2); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 16px 20px; margin-bottom: 16px; max-width: 600px; transition: opacity .2s;
+}
+.question-card .q-label {
+  font-size: 11px; color: var(--accent); text-transform: uppercase;
+  letter-spacing: 1px; margin-bottom: 8px; font-weight: 500;
+}
+.question-card .q-text { font-size: 15px; color: var(--text); margin-bottom: 10px; line-height: 1.6; }
+.question-card .q-context { font-size: 12px; color: var(--text2); margin-bottom: 10px; font-style: italic; }
+.question-card .q-options { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.question-card .q-option {
+  display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+  border-radius: 6px; cursor: pointer; transition: background .15s;
+}
+.question-card .q-option:hover { background: rgba(108,140,255,0.08); }
+.question-card .q-option input { accent-color: var(--accent); cursor: pointer; }
+.question-card .q-input {
+  width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 8px 12px; font-size: 14px; color: var(--text); outline: none; margin-bottom: 12px;
+}
+.question-card .q-input:focus { border-color: var(--accent); }
+.question-card .q-actions { display: flex; gap: 8px; }
+.question-card .q-actions button {
+  padding: 6px 16px; border-radius: 8px; font-size: 13px; cursor: pointer;
+  border: none; transition: all .15s;
+}
+.question-card .q-submit { background: var(--accent); color: #fff; }
+.question-card .q-submit:hover { background: var(--accent2); }
+.question-card .q-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+.question-card .q-skip { background: transparent; color: var(--text2); border: 1px solid var(--border); }
+.question-card .q-skip:hover { color: var(--text); border-color: var(--text2); }
+.question-card .q-answer {
+  margin-top: 12px; padding: 8px 12px; background: rgba(52,211,153,0.08);
+  border: 1px solid rgba(52,211,153,0.2); border-radius: 6px; font-size: 13px; color: var(--green);
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="dot off" id="statusDot"></div>
+  <h1>BI AutoGen</h1>
+  <div style="flex:1"></div>
+  <div class="config">
+    <label class="toggle-label">
+      <input type="checkbox" id="thinkToggle" checked />
+      <span class="toggle-switch"></span>
+      <span>深度思考</span>
+    </label>
+  </div>
+  <div class="config">
+    <label>API</label>
+    <input id="apiUrl" value="http://localhost:8000/api/v1/chat" />
+  </div>
+</div>
+
+<div class="main">
+  <div class="process" id="processPanel">
+    <h2>执行过程</h2>
+    <div id="steps"></div>
+  </div>
+  <div class="chat">
+    <div class="messages" id="messages"></div>
+    <div class="input-bar">
+      <input id="queryInput" placeholder="输入你的问题..." autofocus />
+      <button id="sendBtn" onclick="sendQuery()">发送</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// --- Marked config ---
+marked.setOptions({
+  highlight: (code, lang) => {
+    if (lang && hljs.getLanguage(lang)) {
+      return hljs.highlight(code, { language: lang }).value;
+    }
+    return hljs.highlightAuto(code).value;
+  },
+  breaks: true,
+  gfm: true,
+});
+
+const $ = id => document.getElementById(id);
+let thinking = false;
+let thinkEl = null;       // think content div (textContent target)
+let thinkBlock = null;    // think-block wrapper (for collapse toggle)
+let contentSegments = []; // ordered content segments: {type:'text'|'table', el, raw?, streamNode?, cursorEl?}
+let activeTextSegment = null; // current text segment being streamed to
+let streaming = false;
+let currentAgent = '';
+let agentSteps = {};
+let dagNodes = {};       // task_id -> DOM element
+let dagEdges = [];       // [{from, to}]
+let isDagMode = false;   // whether rendering DAG or linear steps
+
+// --- Session management ---
+function uuid() {
+  return crypto.randomUUID ? crypto.randomUUID() :
+    'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+      const r = Math.random() * 16 | 0;
+      return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+    });
+}
+
+// session_id: 页面生命周期内不变（同一会话）
+// chat_id: 每次对话重新生成
+const sessionId = uuid();
+let chatId = uuid();
+
+// --- Send query ---
+function sendQuery() {
+  const input = $('queryInput');
+  const query = input.value.trim();
+  if (!query || streaming) return;
+  input.value = '';
+  streaming = true;
+  $('sendBtn').disabled = true;
+  input.disabled = true;
+  $('statusDot').className = 'dot';
+  chatId = uuid(); // 每次对话生成新的chat_id
+
+  // User message
+  const msgArea = $('messages');
+  const userDiv = document.createElement('div');
+  userDiv.className = 'msg msg-user';
+  userDiv.textContent = query;
+  msgArea.appendChild(userDiv);
+
+  // Assistant message container
+  const assistantDiv = document.createElement('div');
+  assistantDiv.className = 'msg msg-assistant';
+  assistantDiv.id = 'currentMsg';
+  msgArea.appendChild(assistantDiv);
+
+  // Reset
+  thinking = false;
+  thinkEl = null;
+  thinkBlock = null;
+  contentSegments = [];
+  activeTextSegment = null;
+  currentAgent = '';
+  agentSteps = {};
+  dagNodes = {};
+  dagEdges = [];
+  isDagMode = false;
+  $('steps').innerHTML = '';
+
+  // SSE via fetch
+  const apiUrl = $('apiUrl').value;
+  const enableThinking = $('thinkToggle').checked;
+  fetch(apiUrl, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, session_id: sessionId, chat_id: chatId, enable_thinking: enableThinking }),
+  }).then(response => {
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+
+    function read() {
+      reader.read().then(({ done, value }) => {
+        if (done) { finishStream(); return; }
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split('\n\n');
+        buffer = parts.pop();
+        for (const part of parts) parseSSE(part);
+        read();
+      }).catch(err => {
+        appendError('stream', err.message);
+        finishStream();
+      });
+    }
+    read();
+  }).catch(err => {
+    appendError('network', err.message);
+    finishStream();
+  });
+}
+
+// --- Parse SSE ---
+function parseSSE(block) {
+  let eventType = '', data = '';
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event: ')) eventType = line.slice(7);
+    else if (line.startsWith('data: ')) data = line.slice(6);
+  }
+  if (!eventType || !data) return;
+  let payload;
+  try { payload = JSON.parse(data); } catch { return; }
+  handleEvent(eventType, payload);
+}
+
+// --- Handle event ---
+function handleEvent(type, p) {
+  const d = p.data || {};
+  switch (type) {
+
+    case 'session_start': break;
+
+    case 'plan_start':
+      addStep('system', '规划中...', 'system');
+      break;
+
+    case 'plan_complete': {
+      const tasks = d.tasks || [];
+      const edges = d.edges || [];
+      clearSteps();
+      if (tasks.length === 0) {
+        addStep('system', '直接执行', 'direct');
+      } else if (tasks.length === 1 || edges.length === 0) {
+        // 单任务或无依赖 → 线性步骤
+        tasks.forEach((t, i) => {
+          const label = t.description || t.agent || `任务${i+1}`;
+          addStep(t.agent || `task_${i+1}`, label, t.task_id || `task_${i+1}`);
+        });
+      } else {
+        // DAG 模式
+        renderDAG(tasks, edges);
+      }
+      break;
+    }
+
+    case 'agent_start': {
+      const name = p.agent_name || d.agent_type || 'Agent';
+      currentAgent = name;
+      if (isDagMode) activateDagNode(p.task_id || name);
+      else activateStep(name);
+      break;
+    }
+
+    case 'agent_end': {
+      const name = p.agent_name || currentAgent;
+      const durMs = d.duration_ms;
+      const dur = (durMs != null && durMs > 0) ? (durMs >= 1000 ? `${(durMs/1000).toFixed(1)}s` : `${durMs}ms`) : '';
+      if (isDagMode) doneDagNode(p.task_id || name, d.status === 'error', dur);
+      else doneStep(name, d.status === 'error', dur);
+      break;
+    }
+
+    case 'tool_call': {
+      const name = p.agent_name || currentAgent;
+      appendToolCall(name, d.tool_name, d.arguments);
+      break;
+    }
+
+    case 'tool_result': {
+      const name = p.agent_name || currentAgent;
+      appendToolResult(name, d.is_error, p.content);
+      break;
+    }
+
+    case 'think_chunk': {
+      ensureThinkBlock();
+      thinkEl.textContent += d.chunk || '';
+      thinking = true;
+      scrollBottom();
+      break;
+    }
+
+    case 'llm_chunk': {
+      // 回答开始时，自动收叠思考过程
+      if (thinking && thinkBlock && !thinkBlock.classList.contains('collapsed')) {
+        thinkBlock.classList.add('collapsed');
+        const lbl = thinkBlock.querySelector('.think-label');
+        if (lbl) lbl.textContent = '▶ 思考过程';
+      }
+      thinking = false;
+      ensureTextSegment();
+      const chunk = d.chunk || '';
+      activeTextSegment.raw += chunk;
+      // 流式阶段：直接追加到文本节点，不触发 Markdown 渲染
+      if (activeTextSegment.streamNode) {
+        activeTextSegment.streamNode.textContent += chunk;
+        // 确保光标在末尾
+        if (activeTextSegment.cursorEl && activeTextSegment.cursorEl.parentNode !== activeTextSegment.el) {
+          activeTextSegment.el.appendChild(activeTextSegment.cursorEl);
+        }
+      }
+      scrollBottom();
+      break;
+    }
+
+    case 'data_stored': break;
+
+    case 'table': {
+      // 先结束当前文本段，确保表格插入到正确位置
+      finalizeTextSegment();
+
+      const tableEl = document.createElement('div');
+      tableEl.className = 'table-block';
+      const cols = d.columns || [];
+      const rows = d.rows || [];
+      const title = d.title || d.key || '';
+      const totalRows = d.row_count || rows.length;
+      const pageSize = 20;
+
+      // 存储分页数据
+      tableEl._cols = cols;
+      tableEl._rows = rows;
+      tableEl._pageSize = pageSize;
+      tableEl._page = 0;
+      tableEl._totalRows = totalRows;
+
+      // 标题
+      const caption = document.createElement('div');
+      caption.className = 'table-caption';
+      caption.textContent = `${title} (${totalRows}行 x ${cols.length}列)`;
+      tableEl.appendChild(caption);
+
+      // 表格容器
+      const tableContainer = document.createElement('div');
+      tableContainer.className = 'table-scroll';
+      tableEl.appendChild(tableContainer);
+
+      // 渲染第一页
+      renderTablePage(tableEl, 0);
+
+      // 按顺序追加到消息容器
+      const container = $('currentMsg');
+      container.appendChild(tableEl);
+      contentSegments.push({ type: 'table', el: tableEl });
+
+      scrollBottom();
+      break;
+    }
+
+    case 'error':
+      appendError(d.error_type || 'error', d.message || p.content || '未知错误');
+      break;
+
+    case 'user_question': {
+      showQuestionCard(d);
+      break;
+    }
+
+    case 'user_answer': {
+      // 答复已在前端提交时显示，此处仅用于流日志
+      break;
+    }
+
+    case 'session_end': {
+      // 回答结束时收叠思考过程
+      if (thinkBlock && !thinkBlock.classList.contains('collapsed')) {
+        thinkBlock.classList.add('collapsed');
+        const lbl = thinkBlock.querySelector('.think-label');
+        if (lbl) lbl.textContent = '▶ 思考过程';
+      }
+      // 如果有 result 但没有文本段，创建一个
+      if (contentSegments.length === 0 && d.result) {
+        ensureTextSegment();
+        activeTextSegment.raw = d.result;
+      }
+      // 最终 Markdown 渲染（所有文本段）
+      renderAllMarkdown();
+      const dur = d.duration_ms ? `耗时 ${(d.duration_ms/1000).toFixed(1)}s` : '';
+      addStep('system', `会话结束 ${dur}`, 'end');
+      doneStep('system', false, '');
+      finishStream();
+      break;
+    }
+  }
+}
+
+// --- Content segment management ---
+function ensureTextSegment() {
+  if (activeTextSegment) return;
+  const container = $('currentMsg');
+  const el = document.createElement('div');
+  el.className = 'answer-block';
+  const sn = document.createElement('span');
+  sn.className = 'stream-text';
+  el.appendChild(sn);
+  const ce = document.createElement('span');
+  ce.className = 'typing-cursor';
+  ce.textContent = '\u258C';
+  el.appendChild(ce);
+  container.appendChild(el);
+  activeTextSegment = { type: 'text', el, raw: '', streamNode: sn, cursorEl: ce };
+  contentSegments.push(activeTextSegment);
+}
+
+function finalizeTextSegment() {
+  if (!activeTextSegment) return;
+  if (activeTextSegment.cursorEl) {
+    activeTextSegment.cursorEl.remove();
+    activeTextSegment.cursorEl = null;
+  }
+  activeTextSegment.streamNode = null;
+  activeTextSegment = null;
+}
+
+// --- Table pagination ---
+function renderTablePage(tableEl, page) {
+  const cols = tableEl._cols;
+  const rows = tableEl._rows;
+  const pageSize = tableEl._pageSize;
+  const totalPages = Math.ceil(rows.length / pageSize);
+  tableEl._page = page;
+
+  const tableContainer = tableEl.querySelector('.table-scroll');
+  tableContainer.innerHTML = '';
+
+  // 构建表格
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const headerRow = document.createElement('tr');
+  cols.forEach(c => {
+    const th = document.createElement('th');
+    th.textContent = c;
+    headerRow.appendChild(th);
+  });
+  thead.appendChild(headerRow);
+  table.appendChild(thead);
+
+  const start = page * pageSize;
+  const end = Math.min(start + pageSize, rows.length);
+  const tbody = document.createElement('tbody');
+  for (let i = start; i < end; i++) {
+    const tr = document.createElement('tr');
+    (rows[i] || []).forEach(v => {
+      const td = document.createElement('td');
+      td.textContent = v == null ? '' : String(v);
+      tr.appendChild(td);
+    });
+    tbody.appendChild(tr);
+  }
+  table.appendChild(tbody);
+  tableContainer.appendChild(table);
+
+  // 分页控件（仅多页时显示）
+  let pagination = tableEl.querySelector('.table-pagination');
+  if (totalPages > 1) {
+    if (!pagination) {
+      pagination = document.createElement('div');
+      pagination.className = 'table-pagination';
+      tableEl.appendChild(pagination);
+    }
+    pagination.innerHTML = '';
+
+    const prevBtn = document.createElement('button');
+    prevBtn.textContent = '\u4E0A\u4E00\u9875';
+    prevBtn.disabled = page === 0;
+    prevBtn.onclick = () => renderTablePage(tableEl, page - 1);
+
+    const pageInfo = document.createElement('span');
+    pageInfo.className = 'page-info';
+    pageInfo.textContent = `${page + 1} / ${totalPages}`;
+
+    const nextBtn = document.createElement('button');
+    nextBtn.textContent = '\u4E0B\u4E00\u9875';
+    nextBtn.disabled = page >= totalPages - 1;
+    nextBtn.onclick = () => renderTablePage(tableEl, page + 1);
+
+    pagination.appendChild(prevBtn);
+    pagination.appendChild(pageInfo);
+    pagination.appendChild(nextBtn);
+  } else if (pagination) {
+    pagination.remove();
+  }
+}
+
+// --- Markdown rendering (final render for all text segments) ---
+function renderAllMarkdown() {
+  contentSegments.forEach(seg => {
+    if (seg.type === 'text' && seg.raw) {
+      seg.streamNode = null;
+      seg.cursorEl = null;
+      const rawHtml = marked.parse(seg.raw);
+      seg.el.innerHTML = DOMPurify.sanitize(rawHtml);
+      seg.el.querySelectorAll('pre').forEach(pre => {
+        if (pre.querySelector('.copy-btn')) return;
+        const btn = document.createElement('button');
+        btn.className = 'copy-btn';
+        btn.textContent = '\u590D\u5236';
+        btn.onclick = () => {
+          const code = pre.querySelector('code');
+          navigator.clipboard.writeText(code?.textContent || '').then(() => {
+            btn.textContent = '\u5DF2\u590D\u5236';
+            setTimeout(() => btn.textContent = '\u590D\u5236', 1500);
+          });
+        };
+        pre.style.position = 'relative';
+        pre.appendChild(btn);
+      });
+    }
+  });
+  scrollBottom();
+}
+
+// --- DOM helpers ---
+function ensureThinkBlock() {
+  const container = $('currentMsg');
+  if (!thinkBlock) {
+    thinkBlock = document.createElement('div');
+    thinkBlock.className = 'think-block';
+    const label = document.createElement('div');
+    label.className = 'think-label';
+    label.textContent = '▼ 思考过程';
+    const content = document.createElement('div');
+    content.className = 'think-content';
+
+    // 统一切换函数
+    const toggleCollapse = () => {
+      thinkBlock.classList.toggle('collapsed');
+      const isCollapsed = thinkBlock.classList.contains('collapsed');
+      label.textContent = isCollapsed ? '▶ 思考过程' : '▼ 思考过程';
+    };
+
+    // label 点击始终可切换
+    label.onclick = (e) => { e.stopPropagation(); toggleCollapse(); };
+    // 整个 think-block 点击：仅在 collapsed 状态下展开
+    thinkBlock.onclick = () => {
+      if (thinkBlock.classList.contains('collapsed')) toggleCollapse();
+    };
+
+    thinkBlock.appendChild(label);
+    thinkBlock.appendChild(content);
+    container.appendChild(thinkBlock);
+    thinkEl = content;
+  }
+}
+
+function appendError(type, msg) {
+  const container = $('currentMsg') || $('messages');
+  const div = document.createElement('div');
+  div.className = 'error-block';
+  div.textContent = `[${type}] ${msg}`;
+  container.appendChild(div);
+  scrollBottom();
+}
+
+function scrollBottom() {
+  const m = $('messages');
+  requestAnimationFrame(() => m.scrollTop = m.scrollHeight);
+}
+
+// --- Step panel ---
+function addStep(agent, label, id) {
+  const steps = $('steps');
+  const div = document.createElement('div');
+  div.className = 'step';
+  div.id = 'step-' + (id || agent);
+  div.innerHTML = `<span class="icon">○</span><span class="label">${esc(label || agent)}</span><span class="dur"></span>`;
+  steps.appendChild(div);
+  agentSteps[agent] = div;
+  if (id && id !== agent) agentSteps[id] = div;
+}
+
+function clearSteps() { $('steps').innerHTML = ''; agentSteps = {}; }
+
+function activateStep(name) {
+  const el = agentSteps[name];
+  if (el) {
+    el.classList.add('active');
+    el.querySelector('.icon').textContent = '●';
+  }
+}
+
+function doneStep(name, isError, dur) {
+  const el = agentSteps[name];
+  if (el) {
+    el.classList.remove('active');
+    el.classList.add('done');
+    el.querySelector('.icon').textContent = isError ? '✗' : '✓';
+    if (dur) el.querySelector('.dur').textContent = dur;
+  }
+}
+
+function appendToolCall(agent, toolName, args) {
+  const steps = $('steps');
+  const div = document.createElement('div');
+  div.className = 'tool-call';
+  const argsStr = args ? (typeof args === 'string' ? args : JSON.stringify(args).slice(0, 80)) : '';
+  div.innerHTML = `<span class="tname">${esc(toolName)}</span><span class="targs">${esc(argsStr)}</span>`;
+  const stepEl = agentSteps[agent];
+  if (stepEl?.nextSibling) steps.insertBefore(div, stepEl.nextSibling);
+  else steps.appendChild(div);
+}
+
+function appendToolResult(agent, isError, content) {
+  const steps = $('steps');
+  const div = document.createElement('div');
+  div.className = 'tool-result' + (isError ? ' err' : '');
+  const preview = (content || '').slice(0, 80);
+  div.textContent = isError ? `✗ ${preview}` : `↳ ${preview}`;
+  steps.appendChild(div);
+}
+
+// --- DAG rendering ---
+function renderDAG(tasks, edges) {
+  isDagMode = true;
+  dagEdges = edges;
+  const steps = $('steps');
+
+  // Topological sort → layers (BFS)
+  const inDeg = {};
+  const children = {};
+  const taskMap = {};
+  tasks.forEach(t => {
+    taskMap[t.task_id] = t;
+    inDeg[t.task_id] = 0;
+    children[t.task_id] = [];
+  });
+  edges.forEach(e => {
+    inDeg[e.to] = (inDeg[e.to] || 0) + 1;
+    if (children[e.from]) children[e.from].push(e.to);
+  });
+
+  // Build layers via BFS
+  const layers = [];
+  let queue = tasks.filter(t => (inDeg[t.task_id] || 0) === 0).map(t => t.task_id);
+  const visited = new Set();
+  while (queue.length > 0) {
+    layers.push([...queue]);
+    const next = [];
+    for (const id of queue) {
+      visited.add(id);
+      for (const child of (children[id] || [])) {
+        inDeg[child]--;
+        if (inDeg[child] <= 0 && !visited.has(child)) next.push(child);
+      }
+    }
+    queue = next;
+  }
+  // Remaining unvisited tasks
+  tasks.forEach(t => { if (!visited.has(t.task_id)) { layers.push([t.task_id]); visited.add(t.task_id); } });
+
+  // Container
+  const container = document.createElement('div');
+  container.className = 'dag-container';
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.classList.add('dag-svg');
+  container.appendChild(svg);
+
+  const layersDiv = document.createElement('div');
+  layersDiv.className = 'dag-layers';
+
+  layers.forEach(layer => {
+    const layerDiv = document.createElement('div');
+    layerDiv.className = 'dag-layer';
+    layer.forEach(taskId => {
+      const t = taskMap[taskId];
+      if (!t) return;
+      const node = document.createElement('div');
+      node.className = 'dag-node';
+      node.id = 'dag-' + taskId;
+      const agentLabel = (t.agent || taskId).replace('Agent', '');
+      node.innerHTML = `<div class="agent-name">${esc(agentLabel)}</div><div class="task-desc" title="${esc(t.description || '')}">${esc(t.description || taskId)}</div><div class="status-icon"></div>`;
+      layerDiv.appendChild(node);
+      dagNodes[taskId] = node;
+      // Also register by agent name for agent_start/agent_end matching
+      agentSteps[taskId] = node;
+    });
+    layersDiv.appendChild(layerDiv);
+  });
+
+  container.appendChild(layersDiv);
+  steps.appendChild(container);
+
+  // Draw edges after DOM layout
+  requestAnimationFrame(() => drawDagEdges(svg));
+}
+
+function drawDagEdges(svg) {
+  svg.innerHTML = '';
+  const container = svg.parentElement;
+  const rect = container.getBoundingClientRect();
+  svg.setAttribute('width', rect.width);
+  svg.setAttribute('height', rect.height);
+
+  dagEdges.forEach(edge => {
+    const fromEl = dagNodes[edge.from];
+    const toEl = dagNodes[edge.to];
+    if (!fromEl || !toEl) return;
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+    const containerRect = container.getBoundingClientRect();
+
+    const x1 = fromRect.left + fromRect.width / 2 - containerRect.left;
+    const y1 = fromRect.bottom - containerRect.top;
+    const x2 = toRect.left + toRect.width / 2 - containerRect.left;
+    const y2 = toRect.top - containerRect.top;
+    const midY = (y1 + y2) / 2;
+
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', `M${x1},${y1} C${x1},${midY} ${x2},${midY} ${x2},${y2}`);
+    path.classList.add('dag-edge-line');
+    path.dataset.from = edge.from;
+    path.dataset.to = edge.to;
+    svg.appendChild(path);
+  });
+}
+
+function activateDagNode(taskId) {
+  const node = dagNodes[taskId];
+  if (!node) return;
+  node.classList.add('active');
+  const icon = node.querySelector('.status-icon');
+  if (icon) icon.textContent = '●';
+  // Highlight incoming edges
+  document.querySelectorAll('.dag-edge-line').forEach(path => {
+    if (path.dataset.to === taskId) path.classList.add('active');
+  });
+}
+
+function doneDagNode(taskId, isError, dur) {
+  const node = dagNodes[taskId];
+  if (!node) return;
+  node.classList.remove('active');
+  node.classList.add(isError ? 'error' : 'done');
+  const icon = node.querySelector('.status-icon');
+  if (icon) icon.textContent = isError ? '✗' : '✓';
+  // Mark incoming edges as done
+  document.querySelectorAll('.dag-edge-line').forEach(path => {
+    if (path.dataset.to === taskId) {
+      path.classList.remove('active');
+      path.classList.add(isError ? '' : 'done');
+    }
+  });
+  // Show duration (avoid duplicate)
+  if (dur) {
+    let durEl = node.querySelector('.dag-dur');
+    if (!durEl) {
+      durEl = document.createElement('div');
+      durEl.className = 'dag-dur';
+      durEl.style.cssText = 'font-size:10px;color:var(--text2);margin-top:2px;';
+      node.appendChild(durEl);
+    }
+    durEl.textContent = dur;
+  }
+}
+
+// --- Question card (ask_user) ---
+function showQuestionCard(data) {
+  const container = $('currentMsg') || $('messages');
+  const card = document.createElement('div');
+  card.className = 'question-card';
+  card.id = 'q-' + data.question_id;
+
+  const qType = data.question_type || 'open';
+  let html = '<div class="q-label">需要确认</div>';
+  html += '<div class="q-text">' + esc(data.question) + '</div>';
+  if (data.context) {
+    html += '<div class="q-context">' + esc(data.context) + '</div>';
+  }
+
+  if ((qType === 'choice' || qType === 'confirm') && data.options) {
+    html += '<div class="q-options">';
+    const opts = qType === 'confirm' ? ['是', '否'] : data.options;
+    opts.forEach(opt => {
+      html += '<label class="q-option">' +
+        '<input type="radio" name="qopt-' + data.question_id + '" value="' + esc(opt) + '" />' +
+        '<span>' + esc(opt) + '</span></label>';
+    });
+    html += '</div>';
+  } else if (qType === 'multi_choice' && data.options) {
+    html += '<div class="q-options">';
+    data.options.forEach(opt => {
+      html += '<label class="q-option">' +
+        '<input type="checkbox" name="qopt-' + data.question_id + '" value="' + esc(opt) + '" />' +
+        '<span>' + esc(opt) + '</span></label>';
+    });
+    html += '</div>';
+  } else {
+    // open
+    html += '<input class="q-input" type="text" placeholder="请输入答复..." id="qinput-' + data.question_id + '" />';
+  }
+
+  html += '<div class="q-actions">' +
+    '<button class="q-submit" data-qid="' + esc(data.question_id) + '">提交</button>' +
+    '<button class="q-skip" data-qid="' + esc(data.question_id) + '">跳过</button>' +
+    '</div>';
+
+  card.innerHTML = html;
+
+  // 使用事件委托替代 inline onclick，避免 question_id 注入
+  card.querySelector('.q-submit').addEventListener('click', function() {
+    submitQuestionAnswer(this.dataset.qid);
+  });
+  card.querySelector('.q-skip').addEventListener('click', function() {
+    skipQuestion(this.dataset.qid);
+  });
+
+  container.appendChild(card);
+  scrollBottom();
+
+  // Focus input if open
+  if (qType === 'open') {
+    const inp = $('qinput-' + data.question_id);
+    if (inp) {
+      inp.focus();
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter') { e.preventDefault(); submitQuestionAnswer(data.question_id); }
+      });
+    }
+  }
+}
+
+function submitQuestionAnswer(questionId) {
+  const card = $('q-' + questionId);
+  if (!card) return;
+
+  let answer = '';
+  const radio = card.querySelector('input[type=radio]:checked');
+  const checks = card.querySelectorAll('input[type=checkbox]:checked');
+  const textInput = card.querySelector('.q-input');
+
+  if (radio) {
+    answer = radio.value;
+  } else if (checks.length > 0) {
+    answer = Array.from(checks).map(cb => cb.value).join(', ');
+  } else if (textInput) {
+    answer = textInput.value.trim();
+    if (!answer) {
+      textInput.style.borderColor = 'var(--red)';
+      textInput.focus();
+      return;
+    }
+  }
+
+  if (!answer) return;
+
+  // Disable card and show answer
+  disableQuestionCard(card);
+  const ansDiv = document.createElement('div');
+  ansDiv.className = 'q-answer';
+  ansDiv.textContent = '你的答复: ' + answer;
+  card.appendChild(ansDiv);
+
+  // POST to answer endpoint
+  const baseUrl = new URL($('apiUrl').value).origin;
+  fetch(baseUrl + '/api/v1/chat/' + sessionId + '/answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question_id: questionId, answer: answer, answer_type: 'text' }),
+  }).then(resp => {
+    if (!resp.ok) {
+      return resp.json().then(d => appendError('answer', d.error || '提交失败'));
+    }
+  }).catch(err => appendError('network', err.message));
+}
+
+function skipQuestion(questionId) {
+  const card = $('q-' + questionId);
+  if (!card) return;
+
+  disableQuestionCard(card);
+  const ansDiv = document.createElement('div');
+  ansDiv.className = 'q-answer';
+  ansDiv.style.color = 'var(--text2)';
+  ansDiv.style.borderColor = 'var(--border)';
+  ansDiv.style.background = 'rgba(139,143,163,0.06)';
+  ansDiv.textContent = '已跳过';
+  card.appendChild(ansDiv);
+
+  const baseUrl = new URL($('apiUrl').value).origin;
+  fetch(baseUrl + '/api/v1/chat/' + sessionId + '/answer', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question_id: questionId, answer: '用户跳过此问题', answer_type: 'cancel' }),
+  }).catch(() => {});
+}
+
+function disableQuestionCard(card) {
+  card.querySelectorAll('input').forEach(el => el.disabled = true);
+  card.querySelectorAll('button').forEach(el => el.disabled = true);
+  card.style.opacity = '0.7';
+}
+
+function finishStream() {
+  streaming = false;
+  $('sendBtn').disabled = false;
+  $('queryInput').disabled = false;
+  $('queryInput').focus();
+  $('statusDot').className = 'dot off';
+  const cur = $('currentMsg');
+  if (cur) cur.removeAttribute('id');
+}
+
+function esc(s) {
+  const d = document.createElement('span');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Enter key
+$('queryInput').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendQuery(); }
+});
+</script>
+</body>
+</html>

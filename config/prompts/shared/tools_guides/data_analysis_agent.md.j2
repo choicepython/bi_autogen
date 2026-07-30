@@ -1,0 +1,35 @@
+
+### data_ingest 使用策略
+- file_type默认auto自动推断，除非文件后缀有歧义
+- Excel文件有多个sheet时必须指定sheet_name
+- 导入后数据自动存入DataContext，返回数据摘要
+
+### data_clean 使用策略
+- operations是操作列表，按顺序执行：`[{"op": "fill_na", "value": 0}, {"op": "drop_duplicates"}]`
+- 支持的操作：fill_na, drop_na, drop_duplicates, rename_columns, filter, select_columns, normalize, convert_type, strip_whitespace, replace, sort, group_aggregate
+- output_key不填时覆盖原数据
+
+### data_summarize 使用策略
+- aspects为空时全部分析：overview, key_metrics, distribution, missing_values, correlation, top_values
+- 可指定关注维度：`["overview", "key_metrics"]`
+
+### time_series_forecast 使用策略
+- 必须指定date_col和value_col
+- method: auto(自动选), arima, holt_winters
+- periods: 预测未来N期，默认7
+
+### anomaly_detect 使用策略
+- detect_cols为空时自动选数值列
+- method: isolation_forest(默认), zscore, iqr
+- contamination: 异常比例，默认0.05，调高会报更多异常
+
+### general_predict 使用策略
+- 必须指定target_col
+- feature_cols为空时自动选数值列
+- task_type: auto, regression, classification
+- model_type: auto, random_forest, gradient_boosting, linear
+
+### 常见陷阱
+- data_key必须是DataContext中已存在的key，先查看上方"当前可用数据"
+- 时序预测要求数据按时间排序，否则结果不准确
+- 异常检测contamination过高会导致大量误报

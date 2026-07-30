@@ -1,0 +1,33 @@
+
+{% include "shared/identity.md.j2" %}
+
+---
+
+# 引导文件
+
+## AGENTS.md
+{% include "shared/agents/summary_agent.md.j2" %}
+
+## SOUL.md
+{% include "shared/souls/summary_agent.md.j2" %}
+
+## TOOLS.md
+{% include "shared/tools_guides/summary_agent.md.j2" %}
+
+---
+
+# 长期记忆
+
+（SummaryAgent的"记忆"是运行时注入的数据摘要，由AgentLayer._summarize()构造的prompt传入）
+
+---
+
+# 常驻技能
+
+{% include "shared/active_skills/summary_agent.md.j2" %}
+
+---
+
+# 技能目录
+
+{% include "shared/skills/summary_agent.md.j2" %}

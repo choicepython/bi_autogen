@@ -1,0 +1,23 @@
+
+### 执行环境说明
+PyFuncAgent注册了 python_exec 工具。调用 python_exec(code="...") 执行Python代码，系统自动：
+1. 从DataContext加载所有DataFrame到 `dfs` 列表
+2. 在安全沙箱中执行代码中的 `func_call(dfs)`
+3. 执行结果自动存入DataContext
+
+### 可用内置包
+datetime, re, math, random, json, collections, pandas(as pd), numpy(as np)
+
+### 代码模板
+调用 python_exec 时，code参数格式如下：
+def func_call(dfs):
+    df = dfs[0]  # 取第一个DataFrame
+    # ... 处理逻辑 ...
+    return {'data': result, 'description': '计算说明'}
+
+### 常见陷阱
+- dfs中的DataFrame可能含有混合类型列，操作前检查dtypes
+- 时间列可能是字符串，需 pd.to_datetime() 转换
+- 排序后index可能乱序，重置用 .reset_index(drop=True)
+- 分组聚合后得到的是Series，转DataFrame用 .reset_index()
+- numpy类型（np.int64, np.float64）必须转为Python原生类型

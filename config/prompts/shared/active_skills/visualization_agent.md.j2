@@ -1,0 +1,15 @@
+
+### 可视化流程
+1. 查看DataContext中的可用数据和图表
+2. 根据任务描述和数据特征选择图表类型
+3. 调用chart_generate生成图表（可多次调用生成多个图表）
+4. 如需组合展示，调用dashboard_generate生成仪表板
+5. 结果自动存入DataContext图表区
+
+### 图表类型决策树
+- 比较 → bar (竖直) / bar+horizontal (水平)
+- 趋势 → line / area
+- 占比 → pie
+- 关系 → scatter / heatmap
+- 多维 → radar
+- 流程 → funnel

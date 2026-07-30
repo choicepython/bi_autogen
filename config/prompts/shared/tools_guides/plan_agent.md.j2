@@ -1,0 +1,65 @@
+
+PlanAgent 可使用以下工具：
+
+### ask_user 工具
+向用户提问以澄清需求。仅在 API 必填参数缺失时调用。
+
+**参数**：
+- question (string, 必填): 提问内容，必须具体明确
+- question_type (string, 默认"open"): open/choice/multi_choice/confirm
+- options (list[string], 可选): 选项列表，choice/multi_choice 时必填
+- context (string, 可选): 上下文说明
+- default (string, 可选): 默认值
+
+**使用场景**：
+- 用户查询匹配到某个 API，但该 API 的必填参数未被用户问题覆盖时
+- 例如：API 需要 warehouse_id，但用户只说"查产量"未指定仓库
+
+**禁止场景**：
+- API 不需要的参数（如 API 无日期参数时禁止问时间范围）
+- 用户已提供的信息
+- 闲聊或非数据查询类问题
+
+**约束**：
+- 单次规划最多调用 3 次
+- 一次只问一个最关键的缺失参数
+- 收到答复后，将信息融入后续 task 的 description
+
+### dag 工具
+根据任务列表生成 DAG 有向无环图。规划完成后调用此工具提交任务列表。
+
+**参数**：
+- tasks (list, 必填): 任务节点列表，每个任务含以下字段：
+  - task_id (string): 任务唯一标识，如 "1" 或 "2"
+  - agent (string): 执行Agent名称，可选值：APIAgent, SQLAgent, DataAnalysisAgent, VisualizationAgent, RAGAgent, PyFuncAgent, ReportAgent
+  - description (string): 传递给Agent的任务描述
+  - depends_on (list[string]): 依赖的task_id列表，空列表表示无依赖
+- reasoning (string, 可选): 规划思路简述
+
+**使用流程**：
+1. 分析用户问题 + API必填参数 → 判断是否需要 ask_user 澄清
+2. 所有必填参数齐全后，构建任务列表
+3. 调用 dag 工具提交任务列表
+4. 工具返回成功/失败消息，成功后无需再输出JSON文本
+
+**返回值**：
+- 成功: "DAG生成成功，共N个任务"
+- 失败: "DAG生成失败：{错误信息}"（如检测到循环依赖，请修正后重试）
+
+### 任务节点格式（供 dag 工具参考）
+```json
+[
+  {"task_id": "1", "agent": "APIAgent", "description": "调用 lps_queryUnKittingInfo 查询本月仓库调出数据", "depends_on": []},
+  {"task_id": "2", "agent": "PyFuncAgent", "description": "对调出数据进行统计分析，计算各仓库调出量排名", "depends_on": ["1"]}
+]
+```
+
+### 注意事项
+- 调用 dag 工具后无需再输出 JSON 文本
+- task_id使用纯数字字符串（"1", "2", "3"...）
+- depends_on中的值必须与某任务的task_id完全一致
+- **禁止自依赖**：depends_on不能包含自身的task_id
+- **DAG必须有根节点**：至少一个任务的depends_on为空数组[]
+- **禁止循环依赖**：A依赖B的同时B不能依赖A
+- 当历史数据已存在时，直接使用数据的Agent（如PyFuncAgent）的depends_on应为空数组[]，因为数据已自动加载
+- agent字段必须是以下值之一：APIAgent, SQLAgent, DataAnalysisAgent, VisualizationAgent, RAGAgent, PyFuncAgent, ReportAgent
