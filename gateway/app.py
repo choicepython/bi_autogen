@@ -4,13 +4,14 @@
 from __future__ import annotations
 
 import logging
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from urllib.parse import quote
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
@@ -38,6 +39,11 @@ async def lifespan(app: FastAPI):
     """应用生命周期：启动和关闭。"""
     # --- 启动 ---
     logger.info("[Gateway] 服务启动中...")
+
+    # 启动配置校验
+    from config.startup_check import check_startup_config
+    check_startup_config()
+
     try:
         from db import init_db
         await init_db()
@@ -51,11 +57,23 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("[Gateway] DB Writer 启动失败: %s", e)
 
+    # 创建存储实例（Redis 或 InMemory，根据配置优雅降级）
+    from core.store_factory import create_conversation_store, create_data_context_cache
+
+    conversation_store = await create_conversation_store()
+    data_context_cache = await create_data_context_cache()
+    global _team
+    _team = BITeam(conversation_store=conversation_store, data_context_cache=data_context_cache)
+    logger.info(
+        "[Gateway] BITeam 已初始化（store=%s, cache=%s）",
+        type(conversation_store).__name__, type(data_context_cache).__name__,
+    )
+
     logger.info("[Gateway] 服务已启动: http://%s:%d", settings.server_host, settings.server_port)
     yield
 
     # --- 关闭 ---
-    logger.info("[Gateway] 服务关闭中...")
+    logger.info("[Gateway] 服务关闭中（等待在飞请求完成，最多 %ds）...", settings.shutdown_grace_period)
     try:
         await db_writer.stop()
     except Exception as e:
@@ -73,6 +91,13 @@ async def lifespan(app: FastAPI):
         await close_pool()
     except Exception as e:
         logger.warning("[Gateway] 关闭连接池失败: %s", e)
+
+    # 刷新可观测性平台待发送数据
+    try:
+        from observability.observer_factory import get_trace_observer
+        get_trace_observer().flush()
+    except Exception as e:
+        logger.warning("[Gateway] 可观测性 flush 失败: %s", e)
 
     logger.info("[Gateway] 服务已关闭")
 
@@ -229,7 +254,7 @@ def _register_routes(app: FastAPI) -> None:
             if not session_id:
                 return JSONResponse(status_code=400, content={"error": "session_id 不能为空"})
 
-            from db.writer import db_writer, make_session_data
+            from db.writer import db_writer
 
             await db_writer.enqueue_feedback({
                 "session_id": session_id,
@@ -243,3 +268,24 @@ def _register_routes(app: FastAPI) -> None:
             return {"status": "ok"}
         except Exception as e:
             return JSONResponse(status_code=500, content={"error": str(e)})
+
+    # --- 报告下载 ---
+    @app.get("/api/v1/reports/{filename}", summary="下载报告文件", tags=["report"])
+    async def download_report(filename: str):
+        """下载已生成的报告文件（word/ppt/html/pdf）。
+
+        路径遍历防御：取 Path.name 后与原值比对，拒绝含目录分隔符或 .. 的输入。
+        """
+        # 路径遍历防御：禁止 .. 和绝对路径，仅允许纯文件名
+        safe = Path(filename).name
+        if safe != filename or not safe:
+            raise HTTPException(status_code=400, detail="非法文件名")
+        path = Path(tempfile.gettempdir()) / "bi_reports" / safe
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="报告不存在或已过期")
+        # RFC 5987: 非 ASCII 文件名需用 filename*=UTF-8'' 编码，避免 latin-1 header 编码失败
+        quoted = quote(safe)
+        return FileResponse(
+            str(path),
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"},
+        )

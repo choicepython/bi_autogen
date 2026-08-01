@@ -185,6 +185,48 @@ body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background: v
 .table-pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
 .table-pagination .page-info { min-width: 60px; text-align: center; }
 
+/* Quick action: summarize button (回答结束时展示，一键路由到数据分析智能体) */
+.summarize-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: linear-gradient(135deg, var(--accent), var(--accent2));
+  color: #fff; border: none; border-radius: 8px;
+  padding: 8px 18px; font-size: 13px; font-weight: 500;
+  cursor: pointer; margin-top: 14px; transition: all .15s;
+  box-shadow: 0 2px 8px rgba(108,140,255,0.25);
+}
+.summarize-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(108,140,255,0.35); }
+.summarize-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* Quick action: report button (回答结束时展示，一键路由到 ReportAgent 生成 PPT 报告) */
+.report-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: linear-gradient(135deg, #2bb673, #1a9e5f);
+  color: #fff; border: none; border-radius: 8px;
+  padding: 8px 18px; font-size: 13px; font-weight: 500;
+  cursor: pointer; margin-top: 14px; margin-left: 10px; transition: all .15s;
+  box-shadow: 0 2px 8px rgba(43,182,115,0.25);
+}
+.report-btn:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(43,182,115,0.35); }
+.report-btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; box-shadow: none; }
+
+/* File download card (FILE 事件渲染) */
+.file-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+  padding: 12px 16px; margin: 10px 0; transition: all .15s;
+}
+.file-card:hover { border-color: #2bb673; box-shadow: 0 2px 8px rgba(43,182,115,0.12); }
+.file-card .file-icon { font-size: 24px; }
+.file-card .file-info { flex: 1; min-width: 0; }
+.file-card .file-title { font-size: 14px; font-weight: 500; color: var(--text); word-break: break-all; }
+.file-card .file-meta { font-size: 12px; color: var(--text2); margin-top: 2px; }
+.file-card .file-download {
+  background: #2bb673; color: #fff; border: none; border-radius: 6px;
+  padding: 8px 16px; font-size: 13px; cursor: pointer; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 4px; transition: background .15s; flex-shrink: 0;
+}
+.file-card .file-download:hover { background: #1a9e5f; }
+
 /* Input bar */
 .input-bar { padding: 14px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; background: var(--surface); }
 .input-bar input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: 14px; color: var(--text); outline: none; transition: border-color .2s; }
@@ -316,6 +358,8 @@ let agentSteps = {};
 let dagNodes = {};       // task_id -> DOM element
 let dagEdges = [];       // [{from, to}]
 let isDagMode = false;   // whether rendering DAG or linear steps
+let currentTurnTables = []; // 当前 turn 收到的表格 {key, title}，供一键总结引用
+let currentTurnHasFile = false; // 当前 turn 是否已产出报告文件（避免重复展示生成报告按钮）
 
 // --- Session management ---
 function uuid() {
@@ -337,9 +381,32 @@ function sendQuery() {
   const query = input.value.trim();
   if (!query || streaming) return;
   input.value = '';
+  startChat(query, query, {});
+}
+
+// --- 一键总结：路由到 DataAnalysisAgent，复用同 session 的 DataContext（历史表格已自动恢复）---
+function summarizeTables() {
+  if (streaming || currentTurnTables.length === 0) return;
+  const tableList = currentTurnTables.map(t => `- ${t.title || t.key}（key: ${t.key}）`).join('\n');
+  const query = '请对本次回答中的表格数据进行总结和解读。调用 data_summarize 工具对以下数据生成多维度分析'
+    + '（overview/key_metrics/distribution/top_values 等），并基于分析结果给出关键洞察和业务解读：\n' + tableList;
+  startChat('一键总结表格数据', query, { agent_type: 'DataAnalysisAgent' });
+}
+
+// --- 生成报告：路由到 ReportAgent，基于本次对话上下文生成 PPT 报告 ---
+function generateReport() {
+  if (streaming) return;
+  const query = '请基于本次对话的分析结果和数据，生成一份PPT格式的结构化报告，'
+    + '包含关键发现、数据表格、图表和分析结论。报告需有明确的标题、分章节结构和总结论。';
+  startChat('生成报告', query, { agent_type: 'ReportAgent' });
+}
+
+// --- 通用发送：displayText 为聊天气泡展示文本，query 为发往后端的真实查询，extraBody 附加请求字段 ---
+function startChat(displayText, query, extraBody) {
+  if (streaming) return;
   streaming = true;
   $('sendBtn').disabled = true;
-  input.disabled = true;
+  $('queryInput').disabled = true;
   $('statusDot').className = 'dot';
   chatId = uuid(); // 每次对话生成新的chat_id
 
@@ -347,7 +414,7 @@ function sendQuery() {
   const msgArea = $('messages');
   const userDiv = document.createElement('div');
   userDiv.className = 'msg msg-user';
-  userDiv.textContent = query;
+  userDiv.textContent = displayText;
   msgArea.appendChild(userDiv);
 
   // Assistant message container
@@ -367,15 +434,21 @@ function sendQuery() {
   dagNodes = {};
   dagEdges = [];
   isDagMode = false;
+  currentTurnTables = [];
+  currentTurnHasFile = false;
   $('steps').innerHTML = '';
 
   // SSE via fetch
   const apiUrl = $('apiUrl').value;
   const enableThinking = $('thinkToggle').checked;
+  const body = Object.assign(
+    { query, session_id: sessionId, chat_id: chatId, enable_thinking: enableThinking },
+    extraBody,
+  );
   fetch(apiUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, session_id: sessionId, chat_id: chatId, enable_thinking: enableThinking }),
+    body: JSON.stringify(body),
   }).then(response => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const reader = response.body.getReader();
@@ -400,6 +473,38 @@ function sendQuery() {
     appendError('network', err.message);
     finishStream();
   });
+}
+
+// --- 追加一键总结按钮（回答结束时，若包含表格则展示）---
+function appendSummarizeButton() {
+  const container = $('currentMsg');
+  if (!container) return;
+  const btn = document.createElement('button');
+  btn.className = 'summarize-btn';
+  btn.textContent = '⚡ 一键总结';
+  btn.onclick = () => {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    summarizeTables();
+  };
+  container.appendChild(btn);
+  scrollBottom();
+}
+
+// --- 追加生成报告按钮（回答结束时展示，一键路由到 ReportAgent 生成 PPT 报告）---
+function appendReportButton() {
+  const container = $('currentMsg');
+  if (!container) return;
+  const btn = document.createElement('button');
+  btn.className = 'report-btn';
+  btn.textContent = '📊 生成报告';
+  btn.onclick = () => {
+    btn.disabled = true;
+    btn.style.opacity = '0.5';
+    generateReport();
+  };
+  container.appendChild(btn);
+  scrollBottom();
 }
 
 // --- Parse SSE ---
@@ -544,7 +649,57 @@ function handleEvent(type, p) {
       const container = $('currentMsg');
       container.appendChild(tableEl);
       contentSegments.push({ type: 'table', el: tableEl });
+      currentTurnTables.push({ key: d.key || '', title: title });
 
+      scrollBottom();
+      break;
+    }
+
+    case 'file': {
+      // 报告文件产物：渲染下载卡片（用 textContent 构造，避免 XSS）
+      finalizeTextSegment();
+      const filename = d.filename || '';
+      const format = d.format || '';
+      const title = d.title || filename;
+      const url = d.url ? (location.origin + d.url) : '';
+      const ext = filename.split('.').pop().toLowerCase();
+      const iconMap = { pptx: '📊', docx: '📄', html: '🌐', pdf: '📑' };
+      const icon = iconMap[ext] || '📎';
+      const formatLabel = { ppt: 'PPT', word: 'Word', html: 'HTML', pdf: 'PDF' }[format] || format.toUpperCase();
+
+      const card = document.createElement('div');
+      card.className = 'file-card';
+
+      const iconDiv = document.createElement('div');
+      iconDiv.className = 'file-icon';
+      iconDiv.textContent = icon;
+      card.appendChild(iconDiv);
+
+      const infoDiv = document.createElement('div');
+      infoDiv.className = 'file-info';
+      const titleDiv = document.createElement('div');
+      titleDiv.className = 'file-title';
+      titleDiv.textContent = title;
+      const metaDiv = document.createElement('div');
+      metaDiv.className = 'file-meta';
+      metaDiv.textContent = formatLabel + ' · ' + filename;
+      infoDiv.appendChild(titleDiv);
+      infoDiv.appendChild(metaDiv);
+      card.appendChild(infoDiv);
+
+      if (url) {
+        const a = document.createElement('a');
+        a.className = 'file-download';
+        a.href = url;
+        a.download = filename;
+        a.textContent = '⬇ 下载';
+        card.appendChild(a);
+      }
+
+      const container = $('currentMsg');
+      container.appendChild(card);
+      contentSegments.push({ type: 'file', el: card });
+      currentTurnHasFile = true;
       scrollBottom();
       break;
     }
@@ -577,6 +732,10 @@ function handleEvent(type, p) {
       }
       // 最终 Markdown 渲染（所有文本段）
       renderAllMarkdown();
+      // 回答包含表格时，追加一键总结按钮（路由到 DataAnalysisAgent，复用同 session 的 DataContext）
+      if (currentTurnTables.length > 0) appendSummarizeButton();
+      // 回答有内容且本轮未产出报告时，追加生成报告按钮（路由到 ReportAgent 生成 PPT）
+      if (!currentTurnHasFile && contentSegments.length > 0) appendReportButton();
       const dur = d.duration_ms ? `耗时 ${(d.duration_ms/1000).toFixed(1)}s` : '';
       addStep('system', `会话结束 ${dur}`, 'end');
       doneStep('system', false, '');

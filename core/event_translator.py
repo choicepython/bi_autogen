@@ -412,6 +412,29 @@ class EventTranslator:
             },
         )
 
+    def make_file_event(self, filename: str, format: str, url: str, title: str = "") -> StreamEvent:
+        """生成 FILE 事件，携带报告文件名和下载链接供前端渲染下载卡片。
+
+        Args:
+            filename: 文件名（含扩展名，如 "生产分析报告.pptx"）。
+            format: 文件格式（word/ppt/html/pdf）。
+            url: 下载链接（相对路径，如 "/api/v1/reports/xxx.pptx"）。
+            title: 报告标题（展示用）。
+        """
+        return StreamEvent(
+            type=StreamEventType.FILE,
+            seq=self._next_seq(),
+            timestamp=self._now(),
+            session_id=self._session_id,
+            content=f"报告已生成: {title or filename}",
+            data={
+                "filename": filename,
+                "format": format,
+                "url": url,
+                "title": title,
+            },
+        )
+
 
 # ---------------------------------------------------------------------------
 # Helper: 判断文本是否为自然语言回答（而非工具输出摘要）

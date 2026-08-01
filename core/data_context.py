@@ -20,6 +20,7 @@ class DataContext:
         self._store: dict[str, pd.DataFrame] = {}
         self._metadata: dict[str, dict[str, object]] = {}
         self._charts: dict[str, ChartArtifact] = {}
+        self._reports: list[dict[str, str]] = []
         self._lock = asyncio.Lock()
 
     async def put(self, key: str, df: pd.DataFrame, meta: dict[str, object] | None = None) -> None:
@@ -56,6 +57,7 @@ class DataContext:
             self._store.clear()
             self._metadata.clear()
             self._charts.clear()
+            self._reports.clear()
 
     def summarize(self, key: str, max_rows: int | None = None, max_cols: int | None = None) -> str:
         df = self._store.get(key)
@@ -144,3 +146,24 @@ class DataContext:
         for key, art in self._charts.items():
             lines.append(f"图表 '{key}': 类型={art.chart_type}, 标题={art.title}, 数据源={art.data_key}, 尺寸={art.width}x{art.height}")
         return "\n".join(lines)
+
+    # ---- Report artifact methods ----
+
+    async def put_report(self, report: dict[str, str]) -> None:
+        """注册一份报告产物（由 report_generate 工具调用）。
+
+        Args:
+            report: 包含 filename/format/title/output_path 的字典。
+        """
+        async with self._lock:
+            self._reports.append(report)
+        logger.info("DataContext put_report: filename=%s, format=%s", report.get("filename"), report.get("format"))
+
+    def get_reports(self) -> list[dict[str, str]]:
+        """返回当前已注册的报告列表（不清理）。"""
+        return list(self._reports)
+
+    async def clear_reports(self) -> None:
+        """清空报告列表（一轮 turn 结束后调用，避免下轮重放）。"""
+        async with self._lock:
+            self._reports.clear()

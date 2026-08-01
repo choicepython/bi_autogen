@@ -1,4 +1,3 @@
-
 """流式输出事件模型：BI Agent 系统的标准 SSE 事件协议。
 
 事件生命周期::
@@ -121,6 +120,7 @@ class StreamEventType(str, Enum):
     │ THINK_CHUNK │ LLM 思考过程片段（reasoning_content）               │ 过程展示      │
     │ DATA_STORED  │ 数据写入 DataContext，携带 key 和数据摘要            │ 不展示        │
     │ TABLE        │ 结构化表格数据，携带列名和行数据                     │ 表格展示      │
+    │ FILE         │ 文件产物（报告等），携带文件名和下载链接              │ 文件下载      │
     │ USER_QUESTION│ PlanAgent 向用户提问，携带问题和选项                 │ 用户交互      │
     │ USER_ANSWER  │ 用户答复已收到，携带 question_id 和答复              │ 用户交互      │
     │ ERROR        │ 错误事件，携带错误类型和消息                         │ 错误提示      │
@@ -153,6 +153,9 @@ class StreamEventType(str, Enum):
     # 结构化表格数据
     TABLE = "table"
 
+    # 文件产物（报告等）
+    FILE = "file"
+
     # 用户交互（PlanAgent 主动提问）
     USER_QUESTION = "user_question"
     USER_ANSWER = "user_answer"
@@ -177,6 +180,7 @@ class StreamEventType(str, Enum):
 # THINK_CHUNK:    {"chunk": str}
 # DATA_STORED:    {"key": str, "shape": list[int] | None, "columns": list[str] | None}
 # TABLE:          {"key": str, "title": str, "columns": list[str], "rows": list[list], "row_count": int}
+# FILE:           {"filename": str, "format": str, "url": str, "title": str}
 # USER_QUESTION:  {"question_id": str, "question_type": str, "options": list[str] | None,
 #                  "context": str, "default": str | None, "timeout_seconds": int,
 #                  "ask_count": int, "max_asks": int}

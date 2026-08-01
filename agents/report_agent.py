@@ -36,6 +36,7 @@ class ReportAgent(BIBaseAgent):
             task_id=task_id,
             task_description=task_description,
             tools=[self._call_report_generate],
+            reflect_on_tool_use=True,
         )
 
     def _extra_prompt_vars(self) -> dict[str, str]:
