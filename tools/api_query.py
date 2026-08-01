@@ -16,8 +16,8 @@ from pydantic import Field, create_model
 from config import APIQueryError
 from config.settings import settings
 from core.data_context import DataContext
+from core.resource_factory import get_resource_store
 from utils.common_auth import build_headers
-from utils.es_query import es_query
 
 logger = logging.getLogger(__name__)
 
@@ -51,25 +51,10 @@ def _validate_url(url: str) -> None:
             raise APIQueryError("", detail=f"域名不在白名单内: {hostname}")
 
 
-async def get_api_from_name(name):
-    dsl = {
-        "query": {
-            "bool": {
-                "must": [
-                    {"match": {"name": name}}
-                ]
-            }
-        },
-        "size": 1
-    }
-    try:
-        df = await es_query("chat_bi_doc_sit", dsl)
-    except Exception as e:
-        logger.warning("[APIQuery] 查询 API '%s' 失败: %s", name, e)
-        return []
-    df = df.fillna("")
-    data = df.to_dict(orient="records")
-    return data
+async def get_api_from_name(name: str) -> dict[str, Any] | None:
+    """按名称精确查找 API 元数据（ES 或本地降级）。"""
+    store = get_resource_store()
+    return await store.get_by_name(name)
 
 
 # ES parameters 类型到 Python 类型的映射

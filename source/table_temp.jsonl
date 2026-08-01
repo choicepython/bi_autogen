@@ -1,0 +1,25 @@
+{
+  "source_site": "",
+  "tool_type": "table",
+  "name": "",
+  "description": "",
+  "keywords": [
+    "关键词作为加权"
+  ],
+  "kpi": [
+    "关键词作为加权"
+  ],
+  "params": {},
+  "column_map": {},
+  "parameters": {},
+  "columns": {
+    "表字段": {
+      "type": "类型(eg:varchar",
+      "comment": "描述(eg:批次号"
+    }
+  },
+  "outputs": [],
+  "status": 1,
+  "create_time": "2024-05-30 15:40:00",
+  "update_time": "2024-05-30 15:40:00"
+}

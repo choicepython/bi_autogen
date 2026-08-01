@@ -1,0 +1,36 @@
+{
+  "source_site": "",
+  "tool_type": "",
+  "name": "",
+  "keywords": [
+    "",
+  ],
+  "description": "",
+  "url": "",
+  "method": "",
+  "kpi": [],
+  "params": {},
+  "parameters": {
+    "type": "object",
+    "param1": {
+      "type": "string",
+      "description": ""
+    },
+    "param2": {
+      "type": "string",
+      "description": "",
+      "default": "",
+      "required": true
+    }
+  },
+  "outputs": [
+    {
+      "name": "中文名称(eg:正向单编号",
+      "value": "字段名称(eg:frsFlowNo"
+    },
+    {},
+  ],
+  "status": 1,
+  "create_time": "2025-04-30 17:40:00",
+  "update_time": "2025-04-30 17:40:00"
+}

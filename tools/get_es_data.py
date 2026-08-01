@@ -17,47 +17,16 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from core.resource_factory import get_resource_store
 from core.skill_manager import Skill, get_skill_manager
-from utils.es_query import ESQueryError, es_query
 
 logger = logging.getLogger(__name__)
 
 
 async def get_api_for_query(query: str, source_site: str = "les_portal") -> list[dict[str, Any]]:
-    """根据用户问题从ES搜索匹配的API工具。（异步版本）"""
-    dsl = {
-        "query": {
-            "bool": {
-                "must": [
-                    {
-                        "multi_match": {
-                            "query": query,
-                            "type": "cross_fields",
-                            "operator": "or",
-                            "analyzer": "ik_max_word",
-                            "fields": ["description", "keywords", "kpi^1.2", "column^0.2", "parameters^0.2"]
-                        }
-                    }
-                ],
-                "filter": [
-                    {
-                        "term": {
-                            "source_site": source_site
-                        }
-                    }
-                ]
-            }
-        },
-        "size": 5
-    }
-    try:
-        df = await es_query("chat_bi_doc_sit", dsl)
-    except ESQueryError as e:
-        logger.warning("[ES] 查询失败，返回空列表: %s", e)
-        return []
-    df = df.fillna("")
-    data = df.to_dict(orient="records")
-    return data
+    """根据用户问题搜索匹配的API工具（ES 或本地降级）。"""
+    store = get_resource_store()
+    return await store.search_by_query(query, source_site)
 
 
 async def fetch_es_context(query: str, source_site: str = "les_portal") -> tuple[list[dict[str, Any]], list[Skill]]:
@@ -73,11 +42,7 @@ async def fetch_es_context(query: str, source_site: str = "les_portal") -> tuple
     Returns:
         (api_meta, skills) — API元数据列表和匹配的业务技能列表
     """
-    try:
-        api_meta = await get_api_for_query(query, source_site)
-    except Exception as e:
-        logger.warning("[ES] fetch_es_context 异常，返回空结果: %s", e)
-        return [], []
+    api_meta = await get_api_for_query(query, source_site)
     tool_names = [api["name"] for api in api_meta if api.get("name")]
     skills = get_skill_manager().match_skills_by_api_names(tool_names) if tool_names else []
 
