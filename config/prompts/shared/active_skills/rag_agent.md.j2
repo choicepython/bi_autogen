@@ -1,15 +1,10 @@
 
 ### 搜索-总结流程
 1. 判断是否需要搜索（知识性问题必须搜索，闲聊可直接回答）
-2. 选择搜索工具：内部知识→knowledge_search，W3→w3_search，互联网→xiaoyi_search
+__SEARCH_WORKFLOW__
 3. 调用搜索（可同时调多个，但只调一轮）
 4. 基于搜索结果用自然语言总结回答（这是最关键的一步）
 5. 搜索结果自动存入DataContext供下游引用
 
 ### 搜索策略
-| 问题类型 | 首选工具 | 备选 |
-|----------|----------|------|
-| 内部知识/流程 | knowledge_search | w3_search |
-| 员工/组织信息 | w3_search | - |
-| 互联网公开信息 | xiaoyi_search | - |
-| 不确定来源 | knowledge_search + w3_search | xiaoyi_search |
+__SEARCH_STRATEGY__

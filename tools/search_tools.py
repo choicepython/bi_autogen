@@ -1,15 +1,16 @@
-
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 """
-知识搜索工具 - 支持华为内部知识库搜索、W3社区搜索、小艺联网搜索
+知识搜索工具
 """
+
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
 import re
+from dataclasses import dataclass
 
 import httpx
 import pandas as pd
@@ -19,6 +20,67 @@ from config import SearchError
 from core.data_context import DataContext
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# 工具元数据 — 供 RAGAgent 条件注册 + prompt 渲染使用
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SearchToolMeta:
+    """搜索工具元数据：工具自描述，Agent 消费。
+
+    Attributes:
+        name: 工具名（与 FunctionTool.name 一致）。
+        url_attr: settings 中的 URL 属性名，用于判断是否已配置。
+        label: 工具简短标签（技能目录用）。
+        scene: 适用场景描述（策略表用）。
+        guide: 使用策略文本（工具指南用）。
+        factory: FunctionTool 工厂函数名。
+        api_key_attr: settings 中的 API Key 属性名（可选，用于需要鉴权的搜索服务）。
+    """
+
+    name: str
+    url_attr: str
+    label: str
+    scene: str
+    guide: str
+    factory: str
+    api_key_attr: str = ""
+
+
+SEARCH_TOOL_META: list[SearchToolMeta] = [
+    SearchToolMeta(
+        name="knowledge_search",
+        url_attr="search_knowledge_url",
+        label="内部知识库搜索",
+        scene="内部文档、Wiki、技术文章",
+        guide=(
+            "### knowledge_search 使用策略\n"
+            "- query: 搜索关键词，中文即可\n"
+            "- language: cn(默认)/en\n"
+            "- num: 结果数量1-10，默认5\n"
+            "- 适用：华为内部文档、Wiki、技术文章"
+        ),
+        factory="make_knowledge_search_tool",
+    ),
+    SearchToolMeta(
+        name="web_search",
+        url_attr="web_search_url",
+        label="联网搜索",
+        scene="互联网公开信息",
+        guide=(
+            "### web_search 使用策略\n"
+            "- query: 搜索关键词\n"
+            "- top_n: 结果数量1-20，默认10\n"
+            "- 适用：互联网公开信息（新闻、百科、技术文档）\n"
+            "- 注意：领域相关性较弱，优先用knowledge_search"
+        ),
+        factory="make_web_search_tool",
+        api_key_attr="web_search_api_key",
+    ),
+]
 
 
 def get_uid() -> str:
@@ -88,7 +150,9 @@ class KnowledgeSearch:
         self.app_id = app_id
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
-        self.max_result_length = max_result_length if max_result_length is not None else settings.search_max_result_length
+        self.max_result_length = (
+            max_result_length if max_result_length is not None else settings.search_max_result_length
+        )
 
     async def execute(self, query: str, language: str = "cn", num: int = 5) -> str:
         """执行知识搜索。
@@ -163,93 +227,30 @@ class KnowledgeSearch:
         raise SearchError("knowledge", f"所有重试失败：{last_error}")
 
 
-class W3Search:
-    """W3社区综合搜索工具 - 支持8类资源搜索。"""
+class WebSearch:
+    """百度千帆联网搜索工具 - 通过百度搜索 API 搜索互联网公开信息。
+
+    使用百度千帆 AI Search 接口，支持网页搜索，返回结构化搜索结果。
+    需要 API URL 和 Bearer token（API Key）。
+    """
 
     def __init__(
         self,
         api_url: str | None = None,
-        timeout_seconds: int = 5,
-        max_retries: int = 2,
-        max_result_length: int | None = None,
-    ) -> None:
-        from config import settings
-
-        self.api_url = api_url or settings.search_w3_url
-        self.timeout_seconds = timeout_seconds
-        self.max_retries = max_retries
-        self.max_result_length = max_result_length if max_result_length is not None else settings.search_max_result_length
-
-    async def execute(self, query: str) -> str:
-        """执行W3搜索。
-
-        Args:
-            query: 搜索关键词
-
-        Returns:
-            搜索结果文本，供LLM直接使用
-        """
-        if not query or not query.strip():
-            return "错误：搜索关键词不能为空"
-
-        query = query.strip()
-        logger.info("[W3Search] 查询：'%s'", query)
-
-        headers = {"Content-Type": "application/json"}
-        body = {
-            "user_id": get_uid(),
-            "query": query,
-        }
-
-        last_error = ""
-        for attempt in range(self.max_retries + 1):
-            try:
-                async with httpx.AsyncClient(timeout=self.timeout_seconds, verify=False) as client:
-                    response = await client.post(self.api_url, headers=headers, json=body)
-                    if response.status_code == 200:
-                        result = response.json()
-                        data = result.get("data", {}).get("w3_search_data", [])
-                        logger.info("[W3Search] 成功，返回 %d 条结果", len(data))
-                        return search_data_to_prompt(data, self.max_result_length)
-                    else:
-                        raise SearchError("w3", f"HTTP {response.status_code}")
-
-            except SearchError:
-                raise
-            except httpx.TimeoutException:
-                last_error = f"请求超时 ({self.timeout_seconds}秒)"
-                logger.warning("[W3Search] 超时 (attempt %d)", attempt + 1)
-            except httpx.HTTPError as e:
-                last_error = f"网络错误：{e}"
-                logger.warning("[W3Search] 网络错误 (attempt %d): %s", attempt + 1, e)
-            except Exception as e:
-                last_error = f"未知错误：{e}"
-                logger.error("[W3Search] 异常 (attempt %d): %s", attempt + 1, e, exc_info=True)
-
-            if attempt < self.max_retries:
-                await asyncio.sleep(1 * (attempt + 1))
-
-        raise SearchError("w3", f"所有重试失败：{last_error}")
-
-
-class XiaoYiSearch:
-    """小艺联网搜索工具 - 搜索互联网公开信息。"""
-
-    def __init__(
-        self,
-        api_url: str | None = None,
-        app_id: str = "com.huawei.make.mes.mesai.ikbg",
+        api_key: str | None = None,
         timeout_seconds: int = 15,
         max_retries: int = 2,
         max_result_length: int | None = None,
     ) -> None:
         from config import settings
 
-        self.api_url = api_url or settings.search_xiaoyi_url
-        self.app_id = app_id
+        self.api_url = api_url or settings.web_search_url
+        self.api_key = api_key or settings.web_search_api_key.get_secret_value()
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
-        self.max_result_length = max_result_length if max_result_length is not None else settings.search_max_result_length
+        self.max_result_length = (
+            max_result_length if max_result_length is not None else settings.search_max_result_length
+        )
 
     async def execute(self, query: str, top_n: int = 10) -> str:
         """执行联网搜索。
@@ -260,6 +261,9 @@ class XiaoYiSearch:
 
         Returns:
             搜索结果文本，供LLM直接使用
+
+        Raises:
+            SearchError: 搜索请求失败时抛出。
         """
         if not query or not query.strip():
             return "错误：搜索关键词不能为空"
@@ -267,16 +271,23 @@ class XiaoYiSearch:
         query = query.strip()
         top_n = max(1, min(20, top_n))
 
-        logger.info("[XiaoYiSearch] 查询：'%s', top_n=%d", query, top_n)
+        logger.info("[WebSearch] 查询：'%s', top_n=%d", query, top_n)
 
         headers = {
             "Content-Type": "application/json",
-            "app-id": self.app_id,
+            "Authorization": f"Bearer {self.api_key}",
         }
+        print("+"*100, headers, self.api_url)
         body = {
-            "query": query,
-            "user_id": get_uid(),
-            "num": top_n,
+            "messages": [{"role": "user", "content": query}],
+            "edition": "standard",
+            "search_source": "baidu_search_v2",
+            "resource_type_filter": [
+                {"type": "web", "top_k": top_n},
+                {"type": "video", "top_k": 0},
+                {"type": "image", "top_k": 0},
+                {"type": "aladdin", "top_k": 0},
+            ],
         }
 
         last_error = ""
@@ -286,27 +297,56 @@ class XiaoYiSearch:
                     response = await client.post(self.api_url, headers=headers, json=body)
                     if response.status_code == 200:
                         result = response.json()
-                        logger.info("[XiaoYiSearch] 成功，返回 %d 条结果", len(result))
-                        return search_data_to_prompt(result, self.max_result_length)
+                        references = result.get("references", [])
+                        logger.info("[WebSearch] 成功，返回 %d 条结果", len(references))
+                        normalized = self._normalize_references(references)
+                        return search_data_to_prompt(normalized, self.max_result_length)
                     else:
-                        raise SearchError("xiaoyi", f"HTTP {response.status_code}")
+                        error_msg = "unknown error"
+                        try:
+                            error_msg = response.json().get("error_msg", error_msg)
+                        except Exception:
+                            error_msg = response.text[:200]
+                        raise SearchError("web", f"HTTP {response.status_code}: {error_msg}")
 
             except SearchError:
                 raise
             except httpx.TimeoutException:
                 last_error = f"请求超时 ({self.timeout_seconds}秒)"
-                logger.warning("[XiaoYiSearch] 超时 (attempt %d)", attempt + 1)
+                logger.warning("[WebSearch] 超时 (attempt %d)", attempt + 1)
             except httpx.HTTPError as e:
                 last_error = f"网络错误：{e}"
-                logger.warning("[XiaoYiSearch] 网络错误 (attempt %d): %s", attempt + 1, e)
+                logger.warning("[WebSearch] 网络错误 (attempt %d): %s", attempt + 1, e)
             except Exception as e:
                 last_error = f"未知错误：{e}"
-                logger.error("[XiaoYiSearch] 异常 (attempt %d): %s", attempt + 1, e, exc_info=True)
+                logger.error("[WebSearch] 异常 (attempt %d): %s", attempt + 1, e, exc_info=True)
 
             if attempt < self.max_retries:
                 await asyncio.sleep(1 * (attempt + 1))
 
-        raise SearchError("xiaoyi", f"所有重试失败：{last_error}")
+        raise SearchError("web", f"所有重试失败：{last_error}")
+
+    @staticmethod
+    def _normalize_references(references: list[dict]) -> list[dict]:
+        """将百度千帆搜索结果归一化为 search_data_to_prompt 所需格式。
+
+        Args:
+            references: 百度千帆 API 返回的 references 列表。
+
+        Returns:
+            归一化后的搜索结果列表，每项含 title/content/abstract 字段。
+        """
+        normalized: list[dict] = []
+        for ref in references:
+            normalized.append({
+                "title": ref.get("title", ""),
+                "subtitle": ref.get("website", ""),
+                "content": ref.get("content", ""),
+                "abstract": ref.get("snippet", ""),
+                "url": ref.get("url", ""),
+                "date": ref.get("date", ""),
+            })
+        return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -340,33 +380,17 @@ def make_knowledge_search_tool(data_context: DataContext) -> FunctionTool:
     )
 
 
-def make_w3_search_tool(data_context: DataContext) -> FunctionTool:
-    """创建W3社区搜索 FunctionTool。"""
+def make_web_search_tool(data_context: DataContext) -> FunctionTool:
+    """创建百度千帆联网搜索 FunctionTool。"""
 
-    async def _w3_search(query: str) -> str:
-        searcher = W3Search()
-        result = await searcher.execute(query)
-        await _save_to_context(data_context, "w3_search", query, result)
-        return result
-
-    return FunctionTool(
-        func=_w3_search,
-        name="w3_search",
-        description="W3社区综合搜索。支持8类资源：员工、知识、社区、发文、应用、组织、文档、视频。参数：query(搜索关键词，查员工格式：'部门 姓名'或'员工工号')",
-    )
-
-
-def make_xiaoyi_search_tool(data_context: DataContext) -> FunctionTool:
-    """创建小艺联网搜索 FunctionTool。"""
-
-    async def _xiaoyi_search(query: str, top_n: int = 10) -> str:
-        searcher = XiaoYiSearch()
+    async def _web_search(query: str, top_n: int = 10) -> str:
+        searcher = WebSearch()
         result = await searcher.execute(query, top_n)
-        await _save_to_context(data_context, "xiaoyi_search", query, result)
+        await _save_to_context(data_context, "web_search", query, result)
         return result
 
     return FunctionTool(
-        func=_xiaoyi_search,
-        name="xiaoyi_search",
-        description="小艺联网搜索。搜索互联网公开信息，包括新闻、百科、技术文档等。参数：query(搜索关键词), top_n(结果数量1-20,默认10)",
+        func=_web_search,
+        name="web_search",
+        description="联网搜索。通过百度搜索互联网公开信息，包括新闻、百科、技术文档等。参数：query(搜索关键词), top_n(结果数量1-20,默认10)",
     )
