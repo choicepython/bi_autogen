@@ -15,26 +15,49 @@ logger = logging.getLogger(__name__)
 
 _pool: asyncpg.Pool | None = None
 _pool_lock = asyncio.Lock()
+# 无 DB 配置时设为 True，避免反复尝试连接
+_pool_unavailable: bool = False
 
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
+def _is_db_configured() -> bool:
+    """检查 DB 配置是否完整（host + db_name + user 均非空）。"""
+    return bool(settings.db_host and settings.db_name and settings.db_user)
+
+
 async def get_pool() -> asyncpg.Pool:
-    """获取全局连接池（懒初始化，带锁防并发创建）。"""
-    global _pool
+    """获取全局连接池（懒初始化，带锁防并发创建）。
+
+    无 DB 配置时直接抛 RuntimeError，不尝试连接。
+    """
+    global _pool, _pool_unavailable
     if _pool is not None:
         return _pool
+    if _pool_unavailable:
+        raise RuntimeError("DB 不可用：未配置或连接失败")
+
+    if not _is_db_configured():
+        _pool_unavailable = True
+        logger.info("[DB] db_host/db_name/db_user 未配置，跳过数据库连接")
+        raise RuntimeError("DB 未配置：db_host/db_name/db_user 不能为空")
+
     async with _pool_lock:
         # Double-check after acquiring lock
         if _pool is not None:
             return _pool
-        _pool = await asyncpg.create_pool(
-            dsn=settings.db_dsn,
-            min_size=2,
-            max_size=10,
-            command_timeout=30,
-        )
-        logger.info("[DB] 连接池已创建: %s", settings.db_dsn.split("@")[-1])
+        try:
+            _pool = await asyncpg.create_pool(
+                dsn=settings.db_dsn,
+                min_size=2,
+                max_size=10,
+                command_timeout=30,
+            )
+            logger.info("[DB] 连接池已创建: %s", settings.db_dsn.split("@")[-1])
+        except Exception as e:
+            _pool_unavailable = True
+            logger.warning("[DB] 连接池创建失败，标记为不可用: %s", e)
+            raise
     return _pool
 
 

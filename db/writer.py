@@ -30,6 +30,10 @@ logger = logging.getLogger(__name__)
 # 批量写入参数
 _FLUSH_INTERVAL = 0.5  # 秒
 _BATCH_SIZE = 50
+# 退避参数：DB 连接失败时指数退避，避免每 0.5s 重试刷屏
+_BACKOFF_INITIAL = 1.0  # 初始退避秒数
+_BACKOFF_MAX = 60.0  # 最大退避秒数
+_BACKOFF_FACTOR = 2.0  # 退避乘数
 
 
 class _WriteItem:
@@ -57,6 +61,9 @@ class DBWriter:
         self._total_enqueued = 0
         # 缓存各表的实际列名，INSERT 前过滤掉不存在的列
         self._table_columns: dict[str, set[str]] = {}
+        # DB 健康标志 + 退避状态
+        self._db_healthy = True
+        self._backoff = _BACKOFF_INITIAL
 
     async def start(self) -> None:
         """启动后台写入协程。"""
@@ -157,11 +164,21 @@ class DBWriter:
                 logger.error("[DBWriter] 累计丢弃 %d 条记录，系统可能过载!", self._dropped_count)
 
     async def _consume_loop(self) -> None:
-        """后台消费循环：定时或批量刷写。"""
+        """后台消费循环：定时或批量刷写。DB 不可用时指数退避。"""
         batch: list[_WriteItem] = []
 
         while True:
             try:
+                # DB 不可用时退避等待，不反复尝试连接
+                if not self._db_healthy:
+                    logger.debug("[DBWriter] DB 不可用，退避 %ds", int(self._backoff))
+                    await asyncio.sleep(self._backoff)
+                    # 退避期间积攒的数据尝试刷写
+                    if batch:
+                        await self._flush_batch(batch)
+                        batch = []
+                    continue
+
                 # 等待新数据或超时
                 try:
                     item = await asyncio.wait_for(self._queue.get(), timeout=_FLUSH_INTERVAL)
@@ -186,8 +203,14 @@ class DBWriter:
                     batch = []
 
             except Exception as e:
-                logger.error("[DBWriter] 消费循环异常: %s, batch_size=%d", e, len(batch), exc_info=True)
-                # 不丢弃 batch，尝试刷写失败记录到磁盘
+                # DB 连接/写入失败 → 标记不健康，启动指数退避
+                self._db_healthy = False
+                self._backoff = min(self._backoff * _BACKOFF_FACTOR, _BACKOFF_MAX)
+                logger.warning(
+                    "[DBWriter] DB 写入失败，退避 %ds（下次重试）: %s, batch_size=%d",
+                    int(self._backoff), e, len(batch),
+                )
+                # 失败 batch 写入磁盘，避免数据丢失
                 if batch:
                     self._spill_to_disk(batch, e)
                     batch = []
@@ -206,7 +229,7 @@ class DBWriter:
             logger.error("[DBWriter] 磁盘溢出写入也失败: %s", write_err)
 
     async def _flush_batch(self, batch: list[_WriteItem]) -> None:
-        """批量写入一批记录。按表分组，逐表批量INSERT。"""
+        """批量写入一批记录。按表分组，逐表批量INSERT。成功时重置退避。"""
         if not batch:
             return
 
@@ -220,7 +243,7 @@ class DBWriter:
                         "tool_call": 4, "llm_call": 5, "session_feedback": 6}
         sorted_tables = sorted(by_table.keys(), key=lambda t: _TABLE_ORDER.get(t, 99))
 
-        pool = await get_pool()
+        pool = await get_pool()  # DB 不可用时抛 RuntimeError，由 _consume_loop 捕获
         async with pool.acquire() as conn:
             # 预加载所有涉及的表列信息
             for table in sorted_tables:
@@ -243,6 +266,12 @@ class DBWriter:
                             await self._insert_one(conn, table, row)
                         except Exception as e2:
                             logger.error("[DBWriter] 单条INSERT也失败 %s: %s", table, e2)
+
+        # 写入成功 → 重置退避
+        if not self._db_healthy or self._backoff != _BACKOFF_INITIAL:
+            logger.info("[DBWriter] DB 恢复健康，重置退避")
+        self._db_healthy = True
+        self._backoff = _BACKOFF_INITIAL
 
     @staticmethod
     async def _insert_batch(conn: Any, table: str, rows: list[dict[str, Any]]) -> None:
