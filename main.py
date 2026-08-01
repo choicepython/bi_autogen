@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime
 import logging
 import re
 import sys
-from typing import Any
+from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
+from typing import Any
 
 from core.team import BITeam
 from models.chat_request import ChatRequest
@@ -158,7 +158,6 @@ def _print_stream_event(ev: StreamEvent) -> None:
     elif ev.type == StreamEventType.AGENT_START:
         _safe_print(f"\n[{ev.agent_name}] 开始执行...")
     elif ev.type == StreamEventType.AGENT_END:
-        status = ev.data.get("status", "")
         duration = ev.data.get("duration_ms")
         duration_info = f" ({duration}ms)" if duration else ""
         _safe_print(f"[{ev.agent_name}] 执行完成{duration_info}")
@@ -193,11 +192,11 @@ def _print_stream_event(ev: StreamEvent) -> None:
         if rows:
             # 打印简易表格
             col_widths = [min(max(len(str(c)), max((len(str(r[i])) for r in rows), default=0)), 20) for i, c in enumerate(columns)]
-            header = " | ".join(str(c).ljust(w) for c, w in zip(columns, col_widths))
+            header = " | ".join(str(c).ljust(w) for c, w in zip(columns, col_widths, strict=False))
             _safe_print(f"  {header}")
             _safe_print(f"  {'-' * len(header)}")
             for row in rows[:5]:
-                line = " | ".join(str(v).ljust(w) for v, w in zip(row, col_widths))
+                line = " | ".join(str(v).ljust(w) for v, w in zip(row, col_widths, strict=False))
                 _safe_print(f"  {line}")
             if row_count > 5:
                 _safe_print(f"  ... (共{row_count}行，仅显示前5行)")
@@ -274,6 +273,11 @@ async def run_single(task: str, sse: bool = False) -> None:
 
 
 def main() -> None:
+    # 启动配置校验
+    from config.startup_check import check_startup_config
+    if not check_startup_config():
+        sys.exit(1)
+
     if "--serve" in sys.argv:
         # FastAPI 服务模式
         import uvicorn
@@ -281,7 +285,12 @@ def main() -> None:
         from config import settings
         from gateway.app import create_app
 
-        uvicorn.run(create_app(), host=settings.server_host, port=settings.server_port)
+        uvicorn.run(
+            create_app(),
+            host=settings.server_host,
+            port=settings.server_port,
+            timeout_graceful_shutdown=settings.shutdown_grace_period,
+        )
         return
 
     sse = "--sse" in sys.argv
