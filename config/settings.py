@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     # ---- LLM 超时 ----
     llm_request_timeout: int = 120  # 单次 LLM 请求超时（秒）
     agent_execution_timeout: int = 180  # 单 Agent 执行超时（秒）
+    dag_execution_timeout: int = 180  # DAG 全团队执行超时（秒）
     routing_llm_timeout: int = 30  # 路由层 LLM 意图分类超时（秒）
 
     # ---- PPT 渲染 ----
@@ -68,7 +69,8 @@ class Settings(BaseSettings):
     # ---- 搜索工具 ----
     search_knowledge_url: str = ""
     search_w3_url: str = ""
-    search_xiaoyi_url: str = ""
+    web_search_url: str = ""
+    web_search_api_key: SecretStr = SecretStr("")
     search_timeout: int = 15
     search_max_retries: int = 2
     search_max_result_length: int = 8000  # 搜索结果最大字符数，防止token爆炸
@@ -78,6 +80,7 @@ class Settings(BaseSettings):
     server_port: int = 8000
     cors_origins: list[str] = []  # 空=不允许跨域，生产环境必须配置具体域名
     auth_enabled: bool = False
+    shutdown_grace_period: int = 30  # 优雅关停等待秒数（K8s 默认 30s）
 
     # ---- LLM 思考/推理参数 ----
     enable_thinking: bool = True  # 是否启用 Qwen3 思考模式
@@ -103,6 +106,14 @@ class Settings(BaseSettings):
     semantic_cache_ttl: float = 900.0  # 语义缓存过期时间（秒），默认15分钟
     semantic_cache_threshold: float = 0.92  # 语义相似度阈值（0-1）
     semantic_cache_model: str = "all-MiniLM-L6-v2"  # 嵌入模型名称
+
+    # ---- Redis ----
+    redis_url: str = ""  # 空=使用内存存储（优雅降级），如 redis://localhost:6379/0
+
+    # ---- Langfuse 可观测性 ----
+    langfuse_public_key: str = ""
+    langfuse_secret_key: SecretStr = SecretStr("")
+    langfuse_host: str = ""  # 空=不启用 Langfuse，如 https://cloud.langfuse.com
 
     model_config = {"env_prefix": "BI_", "env_file": ".env", "extra": "ignore"}
 
