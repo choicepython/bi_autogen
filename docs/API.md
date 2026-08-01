@@ -23,10 +23,12 @@
   - [6.1 会话追溯](#61-会话追溯)
 - [7. 反馈接口](#7-反馈接口)
   - [7.1 提交反馈](#71-提交反馈)
-- [8. SSE 事件协议](#8-sse-事件协议)
-- [9. 错误码](#9-错误码)
-- [10. 认证机制](#10-认证机制)
-- [11. 限流策略](#11-限流策略)
+- [8. 报告接口](#8-报告接口)
+  - [8.1 下载报告](#81-下载报告)
+- [9. SSE 事件协议](#9-sse-事件协议)
+- [10. 错误码](#10-错误码)
+- [11. 认证机制](#11-认证机制)
+- [12. 限流策略](#12-限流策略)
 
 ---
 
@@ -251,7 +253,11 @@ GET /api/v1/health
 ```json
 {
   "status": "ok",
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "checks": {
+    "db": "ok",
+    "es": "ok"
+  }
 }
 ```
 
@@ -648,7 +654,40 @@ POST /api/v1/feedback
 
 ---
 
-## 8. SSE 事件协议
+## 8. 报告接口
+
+### 8.1 下载报告
+
+下载已生成的报告文件（word/ppt/html/pdf）。
+
+```
+GET /api/v1/reports/{filename}
+```
+
+**路径参数**:
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `filename` | string | 是 | 报告文件名，仅允许纯文件名（不含目录路径） |
+
+**安全防御**:
+
+- **路径遍历防御**: 使用 `Path.name` 比对原始输入，拒绝含目录分隔符（`/`、`\`）或 `..` 的输入
+- **文件位置**: 报告文件存放于 `tempfile.gettempdir()/bi_reports/` 目录
+- **Content-Disposition**: 按 RFC 5987 规范使用 `filename*=UTF-8''` 编码文件名，支持非 ASCII 文件名
+
+**响应**: 文件二进制流（`Content-Type` 按文件扩展名映射，如 `application/vnd.openxmlformats-officedocument.wordprocessingml.document`）
+
+**HTTP 错误**:
+
+| 状态码 | 说明 |
+|--------|------|
+| 400 | 非法文件名（含目录分隔符或 `..`） |
+| 404 | 报告不存在或已过期 |
+
+---
+
+## 9. SSE 事件协议
 
 Web 聊天接口 (`/api/v1/chat`) 返回 SSE (Server-Sent Events) 流式响应。每个事件遵循标准 SSE 格式：
 
@@ -667,7 +706,11 @@ SESSION_START
   AGENT_START
     TOOL_CALL → TOOL_RESULT  (可多次)
     LLM_CHUNK              (可多次)
+    THINK_CHUNK            (可多次)
     DATA_STORED            (可多次)
+    TABLE                  (可多次)
+    FILE                   (可多次)
+    USER_QUESTION → USER_ANSWER  (可多次)
   AGENT_END
   ... (下一个 Agent)
 SESSION_END
@@ -686,7 +729,12 @@ SESSION_END
 | TOOL_CALL | `tool_call` | 过程展示 | 调用工具，折叠显示 |
 | TOOL_RESULT | `tool_result` | 过程展示 | 工具返回，错误时标红 |
 | LLM_CHUNK | `llm_chunk` | 回答展示 | 流式文本片段，打字机效果 |
+| THINK_CHUNK | `think_chunk` | 过程展示 | LLM 思考过程片段 (reasoning_content) |
 | DATA_STORED | `data_stored` | 不展示 | DataContext 内部写入 |
+| TABLE | `table` | 表格展示 | 结构化表格数据，携带列名和行数据 |
+| FILE | `file` | 文件下载 | 文件产物（报告等），携带文件名和下载链接 |
+| USER_QUESTION | `user_question` | 用户交互 | PlanAgent 向用户提问，携带问题和选项 |
+| USER_ANSWER | `user_answer` | 用户交互 | 用户答复已收到，携带 question_id 和答复 |
 | ERROR | `error` | 错误提示 | 错误事件，toast/红色卡片 |
 
 ### 各事件 data 字段 Schema
@@ -779,6 +827,14 @@ SESSION_END
 
 > 前端应将连续的 `LLM_CHUNK` 事件拼接为完整回答文本。
 
+#### THINK_CHUNK
+
+```json
+{
+  "chunk": "我需要先查询..."
+}
+```
+
 #### DATA_STORED
 
 ```json
@@ -786,6 +842,54 @@ SESSION_END
   "key": "APIAgent_task_1_20260724_100003",
   "shape": [100, 5],
   "columns": ["日期", "产线", "产量", "单位", "备注"]
+}
+```
+
+#### TABLE
+
+```json
+{
+  "key": "SQLAgent_task_1_20260724_100003",
+  "title": "查询结果",
+  "columns": ["日期", "产线", "产量"],
+  "rows": [["2026-07-01", "A线", 1200]],
+  "row_count": 1
+}
+```
+
+#### FILE
+
+```json
+{
+  "filename": "report_20260724.docx",
+  "format": "docx",
+  "url": "/api/v1/reports/report_20260724.docx",
+  "title": "本月生产数据分析报告"
+}
+```
+
+#### USER_QUESTION
+
+```json
+{
+  "question_id": "q_001",
+  "question_type": "choice",
+  "options": ["选项A", "选项B"],
+  "context": "需要确认查询范围",
+  "default": null,
+  "timeout_seconds": 300,
+  "ask_count": 1,
+  "max_asks": 3
+}
+```
+
+#### USER_ANSWER
+
+```json
+{
+  "question_id": "q_001",
+  "answer": "选项A",
+  "answer_type": "choice"
 }
 ```
 
@@ -815,7 +919,7 @@ SESSION_END
 
 ---
 
-## 9. 错误码
+## 10. 错误码
 
 ### HTTP 状态码
 
@@ -841,7 +945,7 @@ SSE 流中通过 `error` 事件类型传递错误，不中断流连接：
 
 ---
 
-## 10. 认证机制
+## 11. 认证机制
 
 ### Web 渠道 — IAM Token
 
@@ -877,7 +981,7 @@ SSE 流中通过 `error` 事件类型传递错误，不中断流连接：
 
 ---
 
-## 11. 限流策略
+## 12. 限流策略
 
 | 策略 | 配置 | 说明 |
 |------|------|------|
@@ -947,4 +1051,10 @@ curl http://localhost:8000/api/v1/sessions/20260724_100001
 curl -X POST http://localhost:8000/api/v1/feedback \
   -H "Content-Type: application/json" \
   -d '{"session_id": "20260724_100001", "rating": 5, "is_positive": true}'
+```
+
+### 下载报告
+
+```bash
+curl http://localhost:8000/api/v1/reports/report_20260724.docx -o report.docx
 ```

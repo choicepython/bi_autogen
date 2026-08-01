@@ -499,7 +499,7 @@ _build_history_messages 内部 resolve_context_spec(agent_type) 读取 spec
 | **DataAnalysisAgent** | `agents/data_analysis_agent.py` | `True` | `data_analysis_agent` | `True` | `1`（默认） | 默认 |
 | **RAGAgent** | `agents/rag_agent.py` | `False` | `rag_agent` | `True` | `5` | `query_history="full"`, `data_catalog="none"` |
 | **VisualizationAgent** | `agents/visualization_agent.py` | `False` | `visualization_agent` | `True` | `1`（默认） | `data_catalog="full"`, `conclusions="all"` |
-| **ReportAgent** | `agents/report_agent.py` | `True` | `report_agent` | `False`（默认） | `1`（默认） | `query_history="full"`, `conclusions="all"` |
+| **ReportAgent** | `agents/report_agent.py` | `True` | `report_agent` | `True` | `1`（默认） | `query_history="full"`, `conclusions="all"` |
 
 > 未显式声明的字段全部走 `ContextSpec` 默认值（`last + schema + own`，`dag_history=tool_summary=planning_hints=False`）。
 
@@ -967,6 +967,31 @@ def __init__(self, model_client, data_context, session=None, task_id=None, task_
 - **`thinking_enabled=False`**：搜索 + 总结是浅层任务
 - **`reflect_on_tool_use=True`**：让 LLM 在搜索后自行总结归纳（不再依赖单独的 `_summarize` 安全网，但保留为兜底——见 `feedback_react_prompt_design.md` 记忆）
 
+#### 工具条件注册与动态 Prompt
+
+RAGAgent 采用**条件注册 + 动态 Prompt** 机制，根据搜索工具配置情况自动切换行为模式：
+
+**工具条件注册**：仅已配置 URL 的搜索工具才会注册为 `FunctionTool`。通过 `SearchToolMeta` 描述每个搜索工具的元信息（名称、工厂函数、URL 配置字段），`SEARCH_TOOL_META` 汇总全部候选工具。构造时遍历 `SEARCH_TOOL_META`，跳过 URL 为空的项：
+
+- 已配置 `BI_SEARCH_KNOWLEDGE_URL` → 注册知识检索工具
+- 已配置 `BI_WEB_SEARCH_URL` + `BI_WEB_SEARCH_API_KEY` → 注册百度千帆联网搜索工具
+- 全部未配置 → 不注册任何工具，降级为纯知识回答模式
+
+**动态 Prompt（`_extra_prompt_vars()`）**：根据已注册的工具集合动态生成以下 prompt 变量：
+
+| 变量 | 内容 | 作用 |
+|---|---|---|
+| 工具指南 | 已注册工具的名称、用途、参数说明 | 告诉 LLM 可用工具及调用方式 |
+| 策略表 | 工具选择优先级与适用场景 | 引导 LLM 按优先级选择搜索源 |
+| 技能目录 | 用户业务技能列表（从 `session.skills`） | 注入领域规则辅助检索 |
+
+**行为模式切换**：
+
+- **无工具时**：使用 `_NO_TOOL_BEHAVIOR` 行为规范——RAGAgent 降级为纯知识回答模式，仅依赖 LLM 自身知识回答用户问题，不调用任何搜索工具
+- **有工具时**：使用 `_WITH_TOOL_BEHAVIOR` 行为规范——LLM 应优先调用已注册的搜索工具获取最新信息，再综合归纳回答
+
+这一设计确保 RAGAgent 在搜索工具未配置时仍可正常工作（纯知识回答），符合优雅降级原则。
+
 ---
 
 ### 3.8 VisualizationAgent（可视化专家）
@@ -1069,7 +1094,7 @@ def __init__(self, model_client, data_context, session=None, task_id=None, task_
     )
 ```
 
-**注意**：直接传**实例方法** `self._call_report_generate` 作为工具，而非工厂函数。`reflect_on_tool_use` 和 `max_tool_iterations` 都走默认（`False` 和 `1`）。
+**注意**：直接传**实例方法** `self._call_report_generate` 作为工具，而非工厂函数。`reflect_on_tool_use=True`（报告生成后 LLM 反思并触发 FILE 事件推送），`max_tool_iterations` 走默认（`1`）。
 
 #### 工具
 
@@ -1105,9 +1130,16 @@ def _extra_prompt_vars(self) -> dict[str, str]:
 #### 设计依据
 
 - **纯渲染工具（不调 LLM）**：根据 `project_report_tool_architecture.md` 记忆，`report_generate` 工具 **必须不调用 LLM**。LLM 在 Agent 这一层输出结构化 JSON（符合 `ReportContent` 模型），工具只做渲染（docx/pptx/html/pdf）。这保证 LLM 和渲染逻辑解耦
-- **`reflect_on_tool_use=False`**：报告生成是终端步骤，不需要重试
+- **`reflect_on_tool_use=True`**：报告生成后 LLM 反思输出，触发 `AgentLayer._emit_task_reports` 推送 FILE 事件（含报告文件路径），供前端下载
 - **`query_history="full" + conclusions="all"`**：报告要汇编整个会话的所有结论，必须全视角
 - **`thinking_enabled=True`**：报告结构组织、章节编排需要深度思考
+
+#### 报告产物与 FILE 事件推送
+
+- **FILE 事件推送**：报告生成完成后，`DagExecutor._emit_task_reports` 读取 DataContext 中的报告产物，向客户端推送 `FILE` 类型 `StreamEvent`（含文件名与路径），支持多文件（word/ppt/html/pdf）。这使前端能在 DAG 收尾阶段直接获取可下载的报告文件链接
+- **DataContext 新增方法**：
+  - `put_report()` — 将报告产物（文件路径、格式、任务 ID）写入 DataContext
+  - `get_reports()` — 读取本 session 全部报告产物，供 `_emit_task_reports` 遍历推送 FILE 事件
 
 ---
 
@@ -1320,6 +1352,12 @@ AgentFactory.create(routing.agent_type, model_client, dc,
 ```
 
 详见 `core/agent_layer.py:485-622`。
+
+> **重构说明**：`agent_layer.py` 的 `run_team` 方法已按职责拆分为两个独立模块，`run_team` 现在只做一行委托调用：
+> - `core/dag_executor.py` — DAG 执行 + 事件推送 + 收尾清理（含 `_emit_task_reports` 推送 FILE 事件，将 ReportAgent 产出的报告文件推送给客户端）
+> - `core/plan_executor.py` — PlanAgent 调用 + DAGPlan 解析（含 fallback）+ GraphFlow 构建
+>
+> 拆分后 `AgentLayer.run_team` 仅负责组装 `PlanExecutor` 与 `DagExecutor` 并委托执行，自身不再承载具体逻辑，符合单文件单一职责原则。
 
 ### 5.2 GraphFlow DAG 执行
 
