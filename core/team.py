@@ -118,4 +118,11 @@ class BITeam:
         except Exception as e:
             logger.warning("[BITeam] 关闭SQL连接池失败: %s", e)
 
+        # 刷新可观测性平台待发送数据
+        try:
+            from observability.observer_factory import get_trace_observer
+            get_trace_observer().flush()
+        except Exception as e:
+            logger.warning("[BITeam] 可观测性 flush 失败: %s", e)
+
         logger.info("[BITeam] 优雅关闭完成")

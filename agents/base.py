@@ -1,11 +1,10 @@
-
 from __future__ import annotations
 
 import json
 import logging
 from collections.abc import AsyncGenerator, Sequence
 from datetime import datetime
-from typing import Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.base import Response
@@ -22,7 +21,11 @@ from pydantic import BaseModel
 
 from core.context import SessionContext
 from core.data_context import DataContext
+from observability.observer_factory import get_trace_observer
 from observability.trace import get_trace_recorder
+
+if TYPE_CHECKING:
+    from models.conversation import ConversationContext
 
 logger = logging.getLogger(__name__)
 
@@ -298,6 +301,18 @@ class BIBaseAgent(AssistantAgent):
                 arguments=arguments,
                 result=result,
             )
+        # Langfuse tool span（retrospective — 记录工具调用元数据）
+        with get_trace_observer().start_span(
+            f"tool:{tool_name}",
+            metadata={
+                "agent_name": agent_name,
+                "task_id": task_id,
+                "arguments": arguments if isinstance(arguments, dict) else {"raw": str(arguments)[:1000]},
+                "result_preview": result[:1000],
+                "is_error": is_error,
+            },
+        ):
+            pass
         # DB: 异步写入工具调用记录
         try:
             from db.writer import db_writer, make_tool_call_data

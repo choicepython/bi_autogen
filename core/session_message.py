@@ -12,7 +12,8 @@ import logging
 import uuid
 from collections.abc import AsyncGenerator
 from datetime import datetime
-from typing import Any
+
+from autogen_core.models import ChatCompletionClient
 
 from config import settings
 from core import turn_summary_builder
@@ -20,7 +21,6 @@ from core.context import SessionContext
 from core.conversation_store import ConversationStore, InMemoryConversationStore
 from core.result_cache import result_cache
 from core.summarizer import summarize_background
-from autogen_core.models import ChatCompletionClient
 from db.writer import db_writer, make_agent_execution_data, make_plan_data, make_routing_data, make_session_data
 from models.cache import CacheLookupResult, ResultCacheEntry
 from models.chat_request import ChatRequest
@@ -28,7 +28,14 @@ from models.conversation import ConversationContext
 from models.routing import RoutingResult
 from models.stream_event import StreamEvent, StreamEventType
 from models.turn_result import TurnResult
-from observability.logging_client import reset_call_index, set_chat_id, set_current_agent, set_enable_thinking, set_session_id
+from observability.logging_client import (
+    reset_call_index,
+    set_chat_id,
+    set_current_agent,
+    set_enable_thinking,
+    set_session_id,
+)
+from observability.observer_factory import get_trace_observer
 from observability.trace import TraceRecorder, set_trace_recorder
 from tools.get_es_data import fetch_es_context
 
@@ -132,6 +139,15 @@ class SessionManager:
         session_start_time = datetime.now()
         cache_hit = await self._check_cache(session_ctx)
 
+        # Langfuse trace 开始
+        self._langfuse_trace_cm = get_trace_observer().start_trace(
+            session_id=self._session_id,
+            query=self._req.query,
+            user_id=self._req.user.user_id,
+            metadata={"source_site": self._req.business.source_site, "chat_id": self._req.chat_id},
+        )
+        self._langfuse_trace_cm.__enter__()
+
         return SessionStartResult(
             session_ctx=session_ctx,
             recorder=recorder,
@@ -182,7 +198,7 @@ class SessionManager:
             logger.warning("[SessionManager] 加载多轮对话历史失败: %s", e)
 
     async def _fetch_es_context(self, session_ctx: SessionContext) -> None:
-        """ES 工具召回（整个会话只查这一次）。"""
+        """资源召回（整个会话只查这一次）。失败时降级为空列表。"""
         try:
             es_api_meta, es_skills = await fetch_es_context(
                 self._req.query, source_site=self._req.business.source_site,
@@ -190,7 +206,9 @@ class SessionManager:
             session_ctx.api_meta = es_api_meta
             session_ctx.skills = es_skills
         except Exception as e:
-            logger.warning("[SessionManager] ES 上下文获取失败，跳过: %s", e)
+            logger.warning("[SessionManager] 资源召回失败，降级为空列表: %s", e)
+            session_ctx.api_meta = []
+            session_ctx.skills = []
 
     async def _check_cache(self, session_ctx: SessionContext) -> CacheLookupResult:
         """缓存检查（有历史时跳过缓存，多轮对话不复用首轮缓存）。"""
@@ -301,7 +319,7 @@ class SessionManager:
     # ------------------------------------------------------------------
 
     async def record_routing(self, routing: RoutingResult, duration_ms: int, session_ctx: SessionContext) -> None:
-        """记录路由决策到 Trace + DB。"""
+        """记录路由决策到 Trace + DB + Langfuse。"""
         self._recorder.record_routing(
             layer=routing.layer,
             mode=routing.mode.value,
@@ -311,6 +329,15 @@ class SessionManager:
             skills_count=len(session_ctx.skills),
             duration_ms=duration_ms,
         )
+        # Langfuse routing span（retrospective — 记录路由结果）
+        with get_trace_observer().start_span("routing", metadata={
+            "layer": routing.layer,
+            "mode": routing.mode.value,
+            "agent_type": routing.agent_type.value if routing.agent_type else "",
+            "reasoning": routing.reasoning[:500],
+            "duration_ms": duration_ms,
+        }):
+            pass
         api_meta_names = [item.get("name", "") for item in session_ctx.api_meta if isinstance(item, dict)]
         await db_writer.enqueue_routing(make_routing_data(
             session_id=self._session_id,
@@ -461,6 +488,12 @@ class SessionManager:
 
     def cleanup(self) -> None:
         """清理 ContextVar（在 finally 块中调用，确保所有路径都清理）。"""
+        # Langfuse trace 结束
+        if hasattr(self, "_langfuse_trace_cm"):
+            self._langfuse_trace_cm.__exit__(None, None, None)
+            del self._langfuse_trace_cm
+        get_trace_observer().flush()
+
         if hasattr(self, "_recorder") and self._recorder is not None:
             try:
                 self._recorder.finish()

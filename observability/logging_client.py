@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from datetime import datetime
@@ -26,6 +25,7 @@ from autogen_core.models._types import (
 )
 from autogen_core.tools import Tool, ToolSchema
 
+from observability.observer_factory import get_trace_observer
 from utils.json_utils import sanitize_for_json
 
 logger = logging.getLogger("bi_autogen.llm_trace")
@@ -335,6 +335,16 @@ class LoggingChatCompletionClient(ChatCompletionClient):
         except Exception as db_err:
             logger.debug("[LoggingClient] DB写入LLM请求失败: %s", db_err)
 
+        # Langfuse generation 开始
+        observer = get_trace_observer()
+        gen_cm = observer.start_generation(
+            name=f"llm:{agent_name}",
+            model=getattr(self._inner, "model_info", {}).get("model", ""),
+            input_data=_serialize_messages(messages),
+            metadata={"call_index": call_index, "tool_count": len(tools)},
+        )
+        gen = gen_cm.__enter__()
+
         request_time = datetime.now()
         try:
             from config.settings import settings
@@ -362,6 +372,9 @@ class LoggingChatCompletionClient(ChatCompletionClient):
                 "error_type": error_type,
                 "error_message": str(e)[:2000],
             })
+            # Langfuse generation 异常结束
+            observer.end_generation(gen, metadata={"error_type": error_type, "error_message": str(e)[:500]})
+            gen_cm.__exit__(None, None, None)
             raise
 
         # 序列化响应
@@ -397,6 +410,19 @@ class LoggingChatCompletionClient(ChatCompletionClient):
         )
 
         _write_llm_log(resp_data)
+
+        # Langfuse generation 结束
+        observer.end_generation(
+            gen,
+            output=resp_data.get("content") or resp_data.get("tool_calls"),
+            usage={
+                "input": result.usage.prompt_tokens,
+                "output": result.usage.completion_tokens,
+                "total": result.usage.prompt_tokens + result.usage.completion_tokens,
+            },
+            metadata={"finish_reason": result.finish_reason, "cached": result.cached},
+        )
+        gen_cm.__exit__(None, None, None)
 
         # DB: 异步写入LLM调用记录（response）
         try:
@@ -484,6 +510,16 @@ class LoggingChatCompletionClient(ChatCompletionClient):
         except Exception as db_err:
             logger.debug("[LoggingClient] DB写入LLM Stream请求失败: %s", db_err)
 
+        # Langfuse generation 开始
+        observer = get_trace_observer()
+        gen_cm = observer.start_generation(
+            name=f"llm:{agent_name}",
+            model=getattr(self._inner, "model_info", {}).get("model", ""),
+            input_data=_serialize_messages(messages),
+            metadata={"call_index": call_index, "tool_count": len(tools), "stream": True},
+        )
+        gen = gen_cm.__enter__()
+
         request_time = datetime.now()
         chunk_count = 0
         try:
@@ -508,6 +544,9 @@ class LoggingChatCompletionClient(ChatCompletionClient):
                 "error_type": error_type,
                 "error_message": str(e)[:2000],
             })
+            # Langfuse generation 异常结束
+            observer.end_generation(gen, metadata={"error_type": error_type, "error_message": str(e)[:500]})
+            gen_cm.__exit__(None, None, None)
             raise
 
         async for chunk in inner_stream:
@@ -569,6 +608,24 @@ class LoggingChatCompletionClient(ChatCompletionClient):
                     ))
                 except Exception as db_err:
                     logger.debug("[LoggingClient] DB写入LLM Stream调用失败: %s", db_err)
+
+                # Langfuse generation 结束
+                observer.end_generation(
+                    gen,
+                    output=resp_data.get("content") or resp_data.get("tool_calls"),
+                    usage={
+                        "input": chunk.usage.prompt_tokens,
+                        "output": chunk.usage.completion_tokens,
+                        "total": chunk.usage.prompt_tokens + chunk.usage.completion_tokens,
+                    },
+                    metadata={
+                        "finish_reason": chunk.finish_reason,
+                        "cached": chunk.cached,
+                        "chunk_count": chunk_count,
+                        "thought": chunk.thought[:500] if chunk.thought else "",
+                    },
+                )
+                gen_cm.__exit__(None, None, None)
 
             yield chunk
 
