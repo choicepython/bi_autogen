@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from config import settings
 from core.team import BITeam
 from db.writer import db_writer
-from gateway.adapter import WebAdapter, WeLinkAdapter
+from gateway.adapter import WebAdapter
 from gateway.middleware import RateLimitMiddleware, RequestLogMiddleware
 
 logger = logging.getLogger(__name__)
@@ -147,15 +147,6 @@ def _register_routes(app: FastAPI) -> None:
     async def web_chat(request: Request):
         """Web渠道：接收ChatRequest JSON，返回SSE流式响应。"""
         adapter = WebAdapter()
-        chat_req = await adapter.parse_request(request)
-        team = _get_team()
-        return await adapter.format_response(chat_req, team)
-
-    # --- WeLink 渠道 ---
-    @app.post("/api/v1/welink/callback", summary="WeLink 事件回调", tags=["welink"])
-    async def welink_callback(request: Request):
-        """WeLink渠道：接收事件回调，异步处理后推送结果。"""
-        adapter = WeLinkAdapter()
         chat_req = await adapter.parse_request(request)
         team = _get_team()
         return await adapter.format_response(chat_req, team)

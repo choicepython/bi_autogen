@@ -86,7 +86,7 @@ observability/       # 可观测性
   logging_client.py  # LoggingChatCompletionClient + ContextVar
   trace.py           # TraceRecorder
 
-agents/              # Agent 定义 (BIBaseAgent 子类)
+agents/              # Agent 定义 (BIBaseAgent 子类，__init__.py 已清空，由 AgentFactory 惰性加载)
   base.py            # BIBaseAgent 基类 + 生命周期钩子
   plan_agent.py      # PlanAgent — DAG规划
   api_agent.py       # APIAgent — 外部API调用
@@ -131,7 +131,7 @@ config/              # 配置
 
 gateway/             # HTTP 网关
   app.py             # FastAPI应用工厂 + 路由
-  adapter.py         # GatewayAdapter + WebAdapter + WeLinkAdapter
+  adapter.py         # GatewayAdapter + WebAdapter
   middleware.py      # RequestLogMiddleware + RateLimitMiddleware
 
 db/                  # 数据库
@@ -139,6 +139,7 @@ db/                  # 数据库
   writer.py          # 异步DB写入器 (Queue + batch INSERT)
   metrics.py         # 监控查询函数
   schema.sql         # DDL (8表)
+  es_schema/         # ES 索引 schema (启动时自动创建)
 
 utils/               # 工具函数
   es_query.py        # Elasticsearch 7.10.2 查询

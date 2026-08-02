@@ -11,7 +11,6 @@
 - [2. 通用约定](#2-通用约定)
 - [3. 聊天接口](#3-聊天接口)
   - [3.1 Web SSE 聊天](#31-web-sse-聊天)
-  - [3.2 WeLink 事件回调](#32-welink-事件回调)
 - [4. 系统接口](#4-系统接口)
   - [4.1 健康检查](#41-健康检查)
 - [5. 指标查询接口](#5-指标查询接口)
@@ -34,12 +33,11 @@
 
 ## 1. 概述
 
-BI Agent 是基于 AutoGen SDK 构建的多智能体数据分析系统，对外通过 FastAPI 提供 HTTP/SSE 接口。支持两种渠道接入：
+BI Agent 是基于 AutoGen SDK 构建的多智能体数据分析系统，对外通过 FastAPI 提供 HTTP/SSE 接口。
 
 | 渠道 | 入口路径 | 请求格式 | 认证方式 | 响应格式 |
 |------|----------|----------|----------|----------|
 | Web | `/api/v1/chat` | ChatRequest JSON | IAM Token (可选) | SSE 流式 |
-| WeLink | `/api/v1/welink/callback` | WeLink 事件回调 | HMAC-SHA256 签名 | JSON 200 (异步推送) |
 
 ---
 
@@ -51,9 +49,6 @@ BI Agent 是基于 AutoGen SDK 构建的多智能体数据分析系统，对外�
 |--------|------|------|
 | `Content-Type` | 是 | `application/json` |
 | `Authorization` | 否 | IAM Token，格式 `Bearer <token>`。`auth_enabled=True` 时必填 |
-| `X-Welink-Timestamp` | WeLink | 请求时间戳 |
-| `X-Welink-Nonce` | WeLink | 随机字符串 |
-| `X-Welink-Signature` | WeLink | HMAC-SHA256 签名 |
 
 ### 响应格式
 
@@ -178,68 +173,6 @@ id: 5
 
 ---
 
-### 3.2 WeLink 事件回调
-
-WeLink 企业 IM 渠道的事件回调入口。收到回调后立即返回 200，异步执行任务并通过 WeLink 消息 API 推送结果。
-
-```
-POST /api/v1/welink/callback
-```
-
-**请求体** (WeLink 事件回调格式):
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `event` | object | 否 | 事件对象（推荐格式） |
-| `event.content` | object\|string | 是 | 用户消息内容 |
-| `event.content.text` | string | 条件 | 当 content 为 object 时的文本字段 |
-| `event.from.userId` | string | 否 | 发送者用户 ID |
-| `event.from.userName` | string | 否 | 发送者用户姓名 |
-| `event.conversationId` | string | 否 | 会话 ID |
-| `msgId` | string | 否 | 消息 ID |
-| `callbackUrl` | string | 否 | 结果推送回调 URL |
-
-> 兼容两种格式：标准事件格式（`event.content`）和简化格式（顶层 `content` 字段）。
-
-**请求示例**:
-
-```json
-{
-  "event": {
-    "content": {
-      "text": "查询本月产量"
-    },
-    "from": {
-      "userId": "wl001",
-      "userName": "李四"
-    },
-    "conversationId": "conv_123"
-  },
-  "msgId": "msg_456",
-  "callbackUrl": "https://welink.example.com/api/message/send"
-}
-```
-
-**响应**:
-
-```json
-{
-  "code": 0,
-  "message": "ok"
-}
-```
-
-> 结果通过 WeLink 消息回调 API 异步推送到 `callbackUrl`。
-
-**HTTP 错误**:
-
-| 状态码 | 说明 |
-|--------|------|
-| 400 | 请求体无效或无法提取用户问题 |
-| 401 | WeLink 签名验证失败 |
-
----
-
 ## 4. 系统接口
 
 ### 4.1 健康检查
@@ -256,10 +189,13 @@ GET /api/v1/health
   "version": "0.1.0",
   "checks": {
     "db": "ok",
-    "es": "ok"
+    "es": "ok",
+    "es_index": "ok"
   }
 }
 ```
+
+> `es_index` 检查项：启动时 `ensure_index_exists()` 自动检查 ES 资源索引（`BI_ES_RESOURCE_INDEX` 配置）是否存在，不存在则根据 `db/es_schema/` 中的 schema 自动创建。
 
 > 健康检查端点不受限流影响。
 
@@ -963,22 +899,6 @@ SSE 流中通过 `error` 事件类型传递错误，不中断流连接：
 | `BI_SERVER_PORT` | `8000` | 服务监听端口 |
 | `BI_CORS_ORIGINS` | `["*"]` | CORS 允许的源 |
 
-### WeLink 渠道 — HMAC-SHA256 签名
-
-- **未配置密钥** (`welink_app_secret=""`): 跳过验证
-- **已配置密钥**: 验证请求签名
-  - 签名算法: `HMAC-SHA256(timestamp + nonce + body)`
-  - 缺少签名头 → 401
-  - 签名不匹配 → 401
-
-配置项:
-
-| 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
-| `BI_WELINK_APP_ID` | `""` | WeLink 应用 ID |
-| `BI_WELINK_APP_SECRET` | `""` | WeLink 应用密钥（用于签名验证） |
-| `BI_WELINK_CALLBACK_URL` | `""` | WeLink 回调 URL |
-
 ---
 
 ## 12. 限流策略
@@ -1016,21 +936,6 @@ curl -N -X POST http://localhost:8000/api/v1/chat \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer your_iam_token_here" \
   -d '{"query": "查询本月产量", "session_id": "conv_001"}'
-```
-
-### WeLink 回调
-
-```bash
-curl -X POST http://localhost:8000/api/v1/welink/callback \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event": {
-      "content": {"text": "查询产量"},
-      "from": {"userId": "wl001", "userName": "李四"},
-      "conversationId": "conv_123"
-    },
-    "msgId": "msg_456"
-  }'
 ```
 
 ### Agent 指标

@@ -11,6 +11,7 @@ BI AutoGen 是一套面向企业 BI 场景的智能数据分析平台，通过�
 - **DAG 并行执行**：基于 GraphFlow 的任务图调度，自动识别可并行任务节点
 - **SSE 流式输出**：13 种 StreamEvent 类型，前端实时获取规划、执行、数据、表格、错误等事件
 - **优雅降级**：ES→本地 jieba 分词、Redis→InMemory 缓存、DB→指数退避重试、Langfuse→no-op，单点故障不影响主流程
+- **ES 索引自动创建**：启动时通过 `ensure_index_exists()` 自动检查并创建 ES 资源索引，schema 由 `db/es_schema/` 目录管理
 - **共享数据上下文**：DataContext 在 Agent 间安全传递 DataFrame，带锁、淘汰、摘要
 - **可观测性**：TraceObserver 抽象 + Langfuse 集成，请求全链路追踪
 - **安全沙箱**：exec 沙箱阻止危险 import、SSRF DNS 校验、SQL 注入防御（sqlparse + 参数化查询）
@@ -52,6 +53,7 @@ cp .env.example .env
 | `BI_LLM_MODEL` | 模型名称（默认 Qwen3） |
 | `BI_PG_DSN` | PostgreSQL 连接串 |
 | `BI_ES_HOSTS` | Elasticsearch 地址列表 |
+| `BI_ES_RESOURCE_INDEX` | ES 资源索引名（默认 `chat_bi_doc_sit`） |
 | `BI_REDIS_URL` | Redis 连接（可选） |
 | `BI_LANGFUSE_*` | Langfuse 可观测性配置（可选） |
 

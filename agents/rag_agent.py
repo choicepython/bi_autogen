@@ -1,5 +1,5 @@
 
-"""RAGAgent：检索增强生成助手，擅长搜索企业内部知识库、W3社区和互联网信息，并对搜索结果进行归纳总结。
+"""RAGAgent：检索增强生成助手，擅长搜索企业内部知识库、互联网信息，并对搜索结果进行归纳总结。
 
 搜索工具按 URL 配置条件注册：仅已配置 URL 的工具才会注册到 Agent 并出现在提示词中。
 未配置任何 URL 时，降级为纯知识回答模式（无工具，基于 LLM 自身知识回答）。
@@ -57,7 +57,7 @@ def _get_available_tools() -> list[SearchToolMeta]:
 
 
 class RAGAgent(BIBaseAgent):
-    """检索增强生成助手，擅长搜索并总结企业内部知识库、W3社区和互联网信息。"""
+    """检索增强生成助手，擅长搜索并总结企业内部知识库、互联网信息。"""
 
     context_spec: ClassVar[ContextSpec] = ContextSpec(query_history="full", data_catalog="none")
     thinking_enabled: ClassVar[bool] = False

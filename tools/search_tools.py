@@ -61,7 +61,7 @@ SEARCH_TOOL_META: list[SearchToolMeta] = [
             "- query: 搜索关键词，中文即可\n"
             "- language: cn(默认)/en\n"
             "- num: 结果数量1-10，默认5\n"
-            "- 适用：华为内部文档、Wiki、技术文章"
+            "- 适用：企业内部文档、Wiki、技术文章"
         ),
         factory="make_knowledge_search_tool",
     ),
@@ -134,7 +134,7 @@ def search_data_to_prompt(search_data: list[dict], max_result_length: int = 8000
 
 
 class KnowledgeSearch:
-    """企业知识库搜索工具 - 搜索华为内部文档、Wiki、技术文章等。"""
+    """企业知识库搜索工具 - 搜索内部文档、Wiki、技术文章等。"""
 
     def __init__(
         self,
@@ -277,7 +277,6 @@ class WebSearch:
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.api_key}",
         }
-        print("+"*100, headers, self.api_url)
         body = {
             "messages": [{"role": "user", "content": query}],
             "edition": "standard",
@@ -376,7 +375,7 @@ def make_knowledge_search_tool(data_context: DataContext) -> FunctionTool:
     return FunctionTool(
         func=_knowledge_search,
         name="knowledge_search",
-        description="企业知识库搜索。搜索华为内部文档、Wiki、技术文章等。参数：query(搜索关键词), language(cn/en,默认cn), num(结果数量1-10,默认5)",
+        description="企业知识库搜索。搜索企业内部文档、Wiki、技术文章等。参数：query(搜索关键词), language(cn/en,默认cn), num(结果数量1-10,默认5)",
     )
 
 
