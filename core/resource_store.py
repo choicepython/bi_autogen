@@ -17,6 +17,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from config.settings import settings
+
 logger = logging.getLogger(__name__)
 
 # 项目根目录（core/ 的父目录）
@@ -245,13 +247,15 @@ class ESResourceStore(ResourceStore):
     """ES 资源存储实现 — 封装现有 es_query() 调用。
 
     DSL 从 tools/get_es_data.py 和 tools/api_query.py 迁移至此，
-    调用方不再直接引用 es_query()。
+    调用方不再直接引用 es_query()。索引名从 settings.es_resource_index 读取，
+    启动时由 startup_check 调用 ensure_index_exists 确保已创建。
     """
 
     async def search_by_query(self, query: str, source_site: str = "") -> list[dict[str, Any]]:
         """ES multi_match 查询，返回 top 5。"""
         from utils.es_query import es_query
 
+        index = settings.es_resource_index
         dsl: dict[str, Any] = {
             "query": {
                 "bool": {
@@ -271,7 +275,7 @@ class ESResourceStore(ResourceStore):
             },
             "size": _MAX_RESULTS,
         }
-        df = await es_query("chat_bi_doc_sit", dsl)
+        df = await es_query(index, dsl)
         df = df.fillna("")
         return df.to_dict(orient="records")
 
@@ -279,6 +283,7 @@ class ESResourceStore(ResourceStore):
         """ES match 精确名查询。"""
         from utils.es_query import es_query
 
+        index = settings.es_resource_index
         dsl: dict[str, Any] = {
             "query": {
                 "bool": {
@@ -287,7 +292,7 @@ class ESResourceStore(ResourceStore):
             },
             "size": 1,
         }
-        df = await es_query("chat_bi_doc_sit", dsl)
+        df = await es_query(index, dsl)
         df = df.fillna("")
         data = df.to_dict(orient="records")
         return data[0] if data else None

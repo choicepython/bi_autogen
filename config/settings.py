@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     es_username: str = ""
     es_password: SecretStr = SecretStr("")
     es_timeout: int = 30
+    es_resource_index: str = "chat_bi_doc_sit"  # 资源元数据索引名（API/Table 共用，tool_type 区分）
 
     # ---- 执行参数 ----
     python_exec_timeout: int = 30
@@ -86,14 +87,8 @@ class Settings(BaseSettings):
     enable_thinking: bool = True  # 是否启用 Qwen3 思考模式
     enable_thinking_output: bool = True  # 是否在流式输出中展示思考内容
 
-    # ---- WeLink ----
-    welink_app_id: str = ""
-    welink_app_secret: SecretStr = SecretStr("")
-    welink_callback_url: str = ""
-
     # ---- SSRF 防护 ----
     api_allowed_domains: list[str] = []  # API 调用允许的域名白名单，空=不限制
-    welink_allowed_domains: list[str] = []  # WeLink 回调允许的域名白名单，空=不限制
 
     # ---- 结果缓存 ----
     result_cache_enabled: bool = False  # 是否启用结果级缓存

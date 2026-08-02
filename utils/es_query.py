@@ -1,7 +1,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -15,6 +17,10 @@ from core.data_context import DataContext
 logger = logging.getLogger(__name__)
 
 _client: Elasticsearch | None = None
+
+# ES schema 文件默认目录（db/es_schema/）
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_DEFAULT_SCHEMA_DIR = _PROJECT_ROOT / "db" / "es_schema"
 
 
 class ESQueryError(BIAgentError):
@@ -41,6 +47,43 @@ def get_es_client() -> Elasticsearch:
 
     _client = Elasticsearch(**kwargs)
     return _client
+
+
+def ensure_index_exists(index: str, schema_path: Path | None = None) -> bool:
+    """确保 ES 索引存在，不存在则按 schema 创建（幂等）。
+
+    索引已存在时直接返回 True；创建失败时记录 ERROR 日志并返回 False，
+    不抛异常（遵循"警告不阻塞"策略，避免 ES 故障阻断应用启动）。
+
+    Args:
+        index: ES 索引名。
+        schema_path: mapping schema 文件路径。None 时用 db/es_schema/{index}.json。
+
+    Returns:
+        True 表示索引已就绪（存在或创建成功），False 表示创建失败或 schema 缺失。
+    """
+    client = get_es_client()
+    path = schema_path or (_DEFAULT_SCHEMA_DIR / f"{index}.json")
+
+    # 索引已存在，直接返回
+    if client.indices.exists(index=index):
+        logger.info("[ES] 索引 '%s' 已存在", index)
+        return True
+
+    # schema 文件缺失，无法创建
+    if not path.is_file():
+        logger.error("[ES] 索引 '%s' 不存在且 schema 文件缺失: %s", index, path)
+        return False
+
+    # 读取 schema 并创建索引
+    try:
+        mapping = json.loads(path.read_text(encoding="utf-8"))
+        client.indices.create(index=index, body=mapping)
+        logger.info("[ES] 索引 '%s' 创建成功（schema: %s）", index, path.name)
+        return True
+    except ElasticsearchException as e:
+        logger.error("[ES] 索引 '%s' 创建失败: %s", index, e)
+        return False
 
 
 async def es_query(

@@ -2,6 +2,9 @@
 """启动配置校验 — 检查必需/可选依赖配置，打印降级状态摘要。
 
 在 main.py 和 gateway/app.py 启动时调用，让用户一目了然知道哪些依赖已配置、哪些降级。
+
+注：ensure_index_exists 采用 lazy import（函数内导入），避免 startup_check 早期执行时
+触发 utils.es_query → core.data_context 的依赖链加载。
 """
 
 from __future__ import annotations
@@ -50,6 +53,14 @@ def check_startup_config() -> bool:
     # Elasticsearch
     if settings.es_hosts:
         lines.append(f"  [OK]   Elasticsearch: {settings.es_hosts}")
+        # 启动时确保资源索引存在，不存在则按 schema 创建（幂等，失败不阻塞）
+        from utils.es_query import ensure_index_exists
+
+        index = settings.es_resource_index
+        if ensure_index_exists(index):
+            lines.append(f"  [OK]   ES 资源索引: {index}（已就绪）")
+        else:
+            lines.append(f"  [WARN] ES 资源索引: {index} 创建失败，资源召回将返回空（详见日志）")
     else:
         lines.append("  [SKIP] Elasticsearch: 未配置 -> 降级为本地资源搜索（读取 source/*.jsonl）")
 
@@ -72,11 +83,19 @@ def check_startup_config() -> bool:
     else:
         lines.append("  [SKIP] 搜索工具: 未配置 -> RAGAgent 搜索功能不可用")
 
-    # WeLink
-    if settings.welink_app_id:
-        lines.append(f"  [OK]   WeLink: {settings.welink_app_id}")
+    # Elasticsearch
+    if settings.es_hosts:
+        lines.append(f"  [OK]   Elasticsearch: {settings.es_hosts}")
+        # 启动时确保资源索引存在，不存在则按 schema 创建（幂等，失败不阻塞）
+        from utils.es_query import ensure_index_exists
+
+        index = settings.es_resource_index
+        if ensure_index_exists(index):
+            lines.append(f"  [OK]   ES 资源索引: {index}（已就绪）")
+        else:
+            lines.append(f"  [WARN] ES 资源索引: {index} 创建失败，资源召回将返回空（详见日志）")
     else:
-        lines.append("  [SKIP] WeLink: 未配置 -> WeLink 渠道不可用")
+        lines.append("  [SKIP] Elasticsearch: 未配置 -> 降级为本地资源搜索（读取 source/*.jsonl）")
 
     lines.append("=" * 60)
 

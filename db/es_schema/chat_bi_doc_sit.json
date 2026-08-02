@@ -1,0 +1,73 @@
+{
+  "_meta": {
+    "description": "BI 资源元数据索引 schema（API + Table 共用，tool_type 区分）",
+    "primary_key": "name",
+    "design_notes": [
+      "name 作为唯一主键，写入时 _id = name 实现 upsert",
+      "kpi/keywords 为业务关键词，用 keyword 类型支持精确匹配与聚合",
+      "description 用 text + ik_max_word 支持中文模糊搜索",
+      "parameters/columns 等复杂结构 object enabled:false 仅存储不索引",
+      "依赖 ES ik 插件，未安装时创建索引会失败"
+    ]
+  },
+  "mappings": {
+    "properties": {
+      "source_site": {
+        "type": "keyword"
+      },
+      "tool_type": {
+        "type": "keyword"
+      },
+      "name": {
+        "type": "keyword"
+      },
+      "description": {
+        "type": "text",
+        "analyzer": "ik_max_word"
+      },
+      "keywords": {
+        "type": "keyword"
+      },
+      "kpi": {
+        "type": "keyword"
+      },
+      "url": {
+        "type": "keyword"
+      },
+      "method": {
+        "type": "keyword"
+      },
+      "parameters": {
+        "type": "object",
+        "enabled": false
+      },
+      "params": {
+        "type": "object",
+        "enabled": false
+      },
+      "columns": {
+        "type": "object",
+        "enabled": false
+      },
+      "column_map": {
+        "type": "object",
+        "enabled": false
+      },
+      "outputs": {
+        "type": "object",
+        "enabled": false
+      },
+      "status": {
+        "type": "integer"
+      },
+      "create_time": {
+        "type": "date",
+        "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd"
+      },
+      "update_time": {
+        "type": "date",
+        "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd"
+      }
+    }
+  }
+}
