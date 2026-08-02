@@ -280,17 +280,30 @@ def main() -> None:
 
     if "--serve" in sys.argv:
         # FastAPI 服务模式
+        import signal
+
         import uvicorn
 
         from config import settings
         from gateway.app import create_app
 
-        uvicorn.run(
-            create_app(),
+        app = create_app()
+        config = uvicorn.Config(
+            app,
             host=settings.server_host,
             port=settings.server_port,
             timeout_graceful_shutdown=settings.shutdown_grace_period,
         )
+        server = uvicorn.Server(config)
+
+        # Windows 上 Ctrl+C → KeyboardInterrupt,但 uvicorn 内部的 asyncio 事件循环
+        # 可能吞掉异常导致进程不退出。通过 signal.signal 注册处理器确保优雅关闭:
+        # SIGINT → server.should_exit = True → uvicorn 触发 lifespan shutdown → 进程退出
+        def _sigint_handler(signum: int, frame: Any) -> None:
+            server.should_exit = True
+
+        signal.signal(signal.SIGINT, _sigint_handler)
+        asyncio.run(server.serve())
         return
 
     sse = "--sse" in sys.argv

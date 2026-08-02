@@ -80,7 +80,16 @@ class DBWriter:
         self._running = False
         await self._queue.put(None)  # 哨兵
         if self._task:
-            await self._task
+            # 最多等待 5s，避免 DB 退避中 sleep(60s) 导致关闭卡壳
+            try:
+                await asyncio.wait_for(asyncio.shield(self._task), timeout=5.0)
+            except TimeoutError:
+                logger.warning("[DBWriter] 后台协程 5s 内未退出，强制取消")
+                self._task.cancel()
+                try:
+                    await self._task
+                except asyncio.CancelledError:
+                    pass
             self._task = None
         logger.info("[DBWriter] 后台写入协程已停止")
 
@@ -167,12 +176,15 @@ class DBWriter:
         """后台消费循环：定时或批量刷写。DB 不可用时指数退避。"""
         batch: list[_WriteItem] = []
 
-        while True:
+        while self._running:
             try:
                 # DB 不可用时退避等待，不反复尝试连接
                 if not self._db_healthy:
                     logger.debug("[DBWriter] DB 不可用，退避 %ds", int(self._backoff))
                     await asyncio.sleep(self._backoff)
+                    # stop() 已请求退出，不再继续退避循环
+                    if not self._running:
+                        break
                     # 退避期间积攒的数据尝试刷写
                     if batch:
                         await self._flush_batch(batch)
